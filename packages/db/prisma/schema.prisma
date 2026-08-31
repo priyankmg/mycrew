@@ -1,0 +1,851 @@
+// mycrew — chat-native workforce management for micro businesses
+//
+// Design notes
+// ------------
+// 1. DYNAMIC SCHEMA (user story 1.8, vision §3.1)
+//    Micro-businesses track wildly different things about their staff, and we
+//    cannot ship a migration every time an owner wants a new field. So every
+//    record-bearing entity uses a hybrid model:
+//
+//      - Fixed columns for the handful of facts the platform itself must
+//        understand to function (who someone is, when they clocked in).
+//      - An `attributes` jsonb column holding owner-defined values, keyed by
+//        `FieldDefinition.key`.
+//
+//    `FieldDefinition` rows are the runtime schema. The engine in
+//    @mycrew/core compiles them into validators, so `attributes` is never a
+//    free-for-all: values are type-checked, coerced and permission-gated on
+//    write. This gives us Postgres-level integrity on the fields that matter
+//    and zero-migration flexibility on the rest.
+//
+// 2. EVERYTHING IS AUDITABLE (stories 2.4, 4.8)
+//    Chat is a lossy medium, and these records have legal weight (vision §3.4
+//    audit log). `DataChange` records every mutation with its actor, before
+//    and after values, and the verbatim human justification.
+//
+// 3. WRITES ARE CONFIRMED, NEVER ASSUMED (story 3.9)
+//    An LLM must not silently mutate payroll data. Mutating tool calls are
+//    parked in `PendingAction` until the user confirms in chat.
+//
+// 4. CHANNEL AGNOSTIC (story 5.1)
+//    WhatsApp is the launch channel, not the architecture. Conversations
+//    store a `channel` discriminator so SMS and voice drop in later.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Connection URLs live in prisma.config.ts as of Prisma 7.
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy & identity
+// ---------------------------------------------------------------------------
+
+/// A single micro-business. The tenant boundary for every other table.
+model Account {
+  id           String   @id @default(cuid())
+  businessName String   @map("business_name")
+  legalName    String?  @map("legal_name")
+  /// IANA timezone, e.g. "America/Los_Angeles". Attendance is meaningless
+  /// without it, so it is captured during onboarding rather than inferred.
+  timezone     String   @default("America/Los_Angeles")
+  countryCode  String   @default("US") @map("country_code")
+  /// Drives which state labor rules the policy generator applies.
+  regionCode   String?  @map("region_code")
+  industry     String?
+  currency     String   @default("USD")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  users              User[]
+  employees          Employee[]
+  fieldDefinitions   FieldDefinition[]
+  policies           Policy[]
+  onboardingSessions OnboardingSession[]
+  conversations      Conversation[]
+  approvalRequests   ApprovalRequest[]
+  attendanceEntries  AttendanceEntry[]
+  leaveRequests      LeaveRequest[]
+  shifts             Shift[]
+  dataChanges        DataChange[]
+  rosterImports      RosterImport[]
+  notifications      Notification[]
+
+  @@map("account")
+}
+
+/// A person who can talk to the system. Deliberately separate from
+/// `Employee`: an Employee is an HR record that exists whether or not that
+/// person ever sends a message, and an owner is a User with no HR record.
+model User {
+  id          String   @id @default(cuid())
+  accountId   String   @map("account_id")
+  role        UserRole
+  displayName String   @map("display_name")
+  /// E.164 format. This is the primary identifier on WhatsApp/SMS, so it is
+  /// unique per account rather than globally: the same human may legitimately
+  /// work for two businesses on the platform.
+  phoneE164   String?  @map("phone_e164")
+  email       String?
+  locale      String   @default("en")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  account            Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// Set when this login belongs to a member of staff.
+  employee           Employee?         @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  employeeId         String?           @unique @map("employee_id")
+  conversations      Conversation[]
+  changesMade        DataChange[]
+  requestsSubmitted  ApprovalRequest[] @relation("ApprovalRequester")
+  requestsDecided    ApprovalRequest[] @relation("ApprovalDecider")
+  attendanceRecorded AttendanceEntry[]
+  rosterImports      RosterImport[]
+  notifications      Notification[]
+
+  @@unique([accountId, phoneE164])
+  @@index([accountId])
+  @@map("user")
+}
+
+enum UserRole {
+  OWNER
+  EMPLOYEE
+  SYSTEM
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic schema engine
+// ---------------------------------------------------------------------------
+
+/// One owner-defined field. Collectively these rows ARE the account's schema.
+///
+/// The engine in @mycrew/core reads these to build a validator for the
+/// matching `attributes` column, so adding a field is an INSERT here rather
+/// than a database migration.
+model FieldDefinition {
+  id        String       @id @default(cuid())
+  accountId String       @map("account_id")
+  /// Which entity's `attributes` bag this field lives in.
+  entity    SchemaEntity
+  /// Stable snake_case identifier used as the `attributes` object key.
+  /// Never shown to users and never renamed, so history stays resolvable.
+  key       String
+  /// Human wording, used verbatim when the assistant asks about this field.
+  label     String
+  /// Extra wording for the assistant, e.g. "the rate before tips".
+  description String?    @map("description")
+
+  dataType   FieldDataType    @map("data_type")
+  isRequired Boolean          @default(false) @map("is_required")
+  /// System fields back platform behaviour (e.g. pay rate feeding payroll).
+  /// They cannot be deleted or retyped by an owner.
+  isCore     Boolean          @default(false) @map("is_core")
+  isUnique   Boolean          @default(false) @map("is_unique")
+
+  /// Who may change this value, and whether it needs approval (stories 2.9, 3.1).
+  editPolicy FieldEditPolicy  @default(OWNER_ONLY) @map("edit_policy")
+  /// Whether staff can even see it. Salary bands stay owner-only.
+  visibility FieldVisibility  @default(OWNER_ONLY)
+
+  /// Allowed choices for SELECT / MULTI_SELECT, as [{value,label}].
+  options    Json?
+  /// Type-specific rules: {min,max,minLength,maxLength,pattern,precision}.
+  validation Json?
+  /// Applied when a record is created without an explicit value.
+  defaultValue Json?          @map("default_value")
+
+  /// Provenance. Tells us whether a human chose this field or an LLM inferred
+  /// it from an uploaded roster, which drives how much we trust it.
+  source       FieldSource    @default(MANUAL)
+  /// Set when `source` is ROSTER_IMPORT or LLM_INFERRED.
+  sourceImportId String?      @map("source_import_id")
+  /// Model confidence (0..1) for inferred fields; null when human-authored.
+  confidence   Float?
+
+  displayOrder Int            @default(0) @map("display_order")
+  /// Soft delete. Archiving preserves historical values in `attributes` and
+  /// keeps `DataChange` rows interpretable, which hard deletion would break.
+  archivedAt   DateTime?      @map("archived_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  account Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  import  RosterImport? @relation(fields: [sourceImportId], references: [id], onDelete: SetNull)
+
+  @@unique([accountId, entity, key])
+  @@index([accountId, entity, archivedAt])
+  @@map("field_definition")
+}
+
+/// Which `attributes` bag a FieldDefinition applies to.
+enum SchemaEntity {
+  EMPLOYEE
+  ATTENDANCE
+  LEAVE
+  SHIFT
+}
+
+enum FieldDataType {
+  TEXT
+  LONG_TEXT
+  NUMBER
+  INTEGER
+  CURRENCY
+  BOOLEAN
+  DATE
+  DATETIME
+  TIME
+  SELECT
+  MULTI_SELECT
+  PHONE
+  EMAIL
+  URL
+  FILE
+}
+
+/// Write authority for a field, enforced by the schema engine on every write.
+enum FieldEditPolicy {
+  /// Derived or platform-managed. No human writes it directly.
+  SYSTEM_ONLY
+  /// Only the business owner.
+  OWNER_ONLY
+  /// Staff may propose a change; it becomes an ApprovalRequest (story 3.1).
+  EMPLOYEE_REQUEST
+  /// Staff may change it outright, e.g. their own phone number.
+  EMPLOYEE_DIRECT
+}
+
+enum FieldVisibility {
+  OWNER_ONLY
+  EMPLOYEE_VISIBLE
+}
+
+enum FieldSource {
+  SYSTEM_DEFAULT
+  ONBOARDING_SURVEY
+  ROSTER_IMPORT
+  LLM_INFERRED
+  MANUAL
+}
+
+// ---------------------------------------------------------------------------
+// Workforce records
+// ---------------------------------------------------------------------------
+
+/// A member of staff. Fixed columns cover what the platform must understand
+/// on its own; everything else the owner cares about lives in `attributes`.
+model Employee {
+  id        String @id @default(cuid())
+  accountId String @map("account_id")
+
+  fullName  String         @map("full_name")
+  phoneE164 String?        @map("phone_e164")
+  email     String?
+  status    EmployeeStatus @default(INVITED)
+  employmentType EmploymentType @default(HOURLY) @map("employment_type")
+  jobTitle  String?        @map("job_title")
+  startDate DateTime?      @map("start_date")
+  endDate   DateTime?      @map("end_date")
+
+  /// Owner-defined values, keyed by FieldDefinition.key. Validated by the
+  /// schema engine, never written raw.
+  attributes Json @default("{}")
+
+  /// Identifier from an imported roster, so re-importing updates rather than
+  /// duplicates.
+  externalRef String? @map("external_ref")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  account           Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user              User?
+  attendanceEntries AttendanceEntry[]
+  leaveRequests     LeaveRequest[]
+  shifts            Shift[]
+  approvalRequests  ApprovalRequest[]
+  notifications     Notification[]
+
+  @@unique([accountId, externalRef])
+  @@index([accountId, status])
+  @@index([accountId, phoneE164])
+  @@map("employee")
+}
+
+enum EmployeeStatus {
+  /// Created by the owner but not yet reachable in chat.
+  INVITED
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+enum EmploymentType {
+  HOURLY
+  SALARIED
+  CONTRACTOR
+}
+
+/// One day of attendance for one person (stories 4.1, 4.7, 4.9).
+model AttendanceEntry {
+  id         String   @id @default(cuid())
+  accountId  String   @map("account_id")
+  employeeId String   @map("employee_id")
+
+  /// Local calendar date in the account's timezone, normalised to midnight
+  /// UTC. Stored separately from the timestamps because "which shift day
+  /// does this belong to" is a business question, not a UTC one — an
+  /// overnight shift ending at 2am belongs to the previous work day.
+  workDate DateTime @map("work_date") @db.Date
+
+  clockInAt  DateTime? @map("clock_in_at")
+  clockOutAt DateTime? @map("clock_out_at")
+  /// Unpaid break minutes, needed for meal-break compliance.
+  breakMinutes Int     @default(0) @map("break_minutes")
+
+  status AttendanceStatus @default(OPEN)
+  /// Why this entry needs a human look: late in, early out, missing clock
+  /// out, overtime risk. Drives the assistant's follow-up question (4.9).
+  flags  AttendanceFlag[] @default([])
+
+  /// The employee's own words, stored verbatim (story 4.4/4.8). Never
+  /// summarised: if this is ever read back in a dispute it must be theirs.
+  justification String?
+
+  source     ChangeSource @default(CHAT)
+  /// Once locked, staff cannot edit (story 4.7). Set when the period is
+  /// approved or paid.
+  lockedAt   DateTime?    @map("locked_at")
+
+  attributes Json @default("{}")
+
+  recordedByUserId String? @map("recorded_by_user_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  account        Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  employee       Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  recordedBy     User?            @relation(fields: [recordedByUserId], references: [id], onDelete: SetNull)
+  approvalRequests ApprovalRequest[]
+
+  @@unique([employeeId, workDate])
+  @@index([accountId, workDate])
+  @@index([accountId, status])
+  @@map("attendance_entry")
+}
+
+enum AttendanceStatus {
+  /// Clocked in, not yet out.
+  OPEN
+  COMPLETE
+  /// Needs owner or employee follow-up.
+  FLAGGED
+  /// Closed for payroll; no further edits.
+  LOCKED
+}
+
+enum AttendanceFlag {
+  LATE_IN
+  EARLY_OUT
+  MISSING_CLOCK_OUT
+  OVERTIME_RISK
+  OUTSIDE_SCHEDULE
+  MISSING_BREAK
+}
+
+/// A leave request (stories 4.2, 4.3). The approval conversation itself
+/// lives on the linked ApprovalRequest so all pending decisions for an owner
+/// can be listed from one place.
+model LeaveRequest {
+  id         String @id @default(cuid())
+  accountId  String @map("account_id")
+  employeeId String @map("employee_id")
+
+  /// Policy-defined rather than an enum: what counts as a leave type is set
+  /// per account by the policy generator ("sick", "unpaid", "family").
+  leaveType String   @map("leave_type")
+  startDate DateTime @map("start_date") @db.Date
+  endDate   DateTime @map("end_date") @db.Date
+  /// Set for partial days; null means the whole working day.
+  hours     Float?
+  /// The employee's verbatim reason.
+  reason    String?
+
+  status ApprovalStatus @default(PENDING)
+
+  attributes Json @default("{}")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  account          Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  employee         Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  approvalRequests ApprovalRequest[]
+
+  @@index([accountId, status])
+  @@index([employeeId, startDate])
+  @@map("leave_request")
+}
+
+/// A planned shift. Needed to detect lateness and labour gaps, which is what
+/// makes attendance flags meaningful rather than guesswork.
+model Shift {
+  id         String  @id @default(cuid())
+  accountId  String  @map("account_id")
+  /// Null for an open shift nobody is assigned to yet.
+  employeeId String? @map("employee_id")
+
+  startAt DateTime @map("start_at")
+  endAt   DateTime @map("end_at")
+  role    String?
+  notes   String?
+
+  attributes Json @default("{}")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  account  Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  employee Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, startAt])
+  @@index([employeeId, startAt])
+  @@map("shift")
+}
+
+// ---------------------------------------------------------------------------
+// Approvals (stories 3.1 - 3.8)
+// ---------------------------------------------------------------------------
+
+/// The universal approval envelope. Field edits, leave and attendance
+/// corrections all create one of these, so "show me everything waiting on
+/// me" (story 3.4) is a single query rather than a union across tables.
+model ApprovalRequest {
+  id        String @id @default(cuid())
+  accountId String @map("account_id")
+
+  /// Short per-account handle so a user can say "what happened to 42?"
+  /// (story 3.3). Rendered as "REQ-42". A database sequence rather than an
+  /// application counter, so concurrent requests cannot collide.
+  seq Int @default(autoincrement())
+
+  type   ApprovalType
+  status ApprovalStatus @default(PENDING)
+
+  /// Who it concerns. Usually the requester's own record, but an owner can
+  /// raise a change on someone else's behalf.
+  employeeId String @map("employee_id")
+  requestedByUserId String? @map("requested_by_user_id")
+
+  /// The proposed mutation, shaped by `type`. For FIELD_CHANGE:
+  /// {entity, entityId, changes: {key: newValue}}.
+  payload Json
+
+  /// One-line natural-language description, written when the request is
+  /// created. Exists so free-text lookup (story 3.3) has something to match
+  /// against without replaying the whole conversation.
+  summary String
+
+  /// The requester's verbatim justification.
+  rationale String?
+
+  decisionByUserId String?   @map("decision_by_user_id")
+  decisionNote     String?   @map("decision_note")
+  decidedAt        DateTime? @map("decided_at")
+
+  /// Set when this request was raised inside a chat, for context on replay.
+  conversationId String? @map("conversation_id")
+
+  /// Optional links to the concrete record under discussion.
+  leaveRequestId    String? @map("leave_request_id")
+  attendanceEntryId String? @map("attendance_entry_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  account         Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  employee        Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  requestedBy     User?            @relation("ApprovalRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  decisionBy      User?            @relation("ApprovalDecider", fields: [decisionByUserId], references: [id], onDelete: SetNull)
+  conversation    Conversation?    @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  leaveRequest    LeaveRequest?    @relation(fields: [leaveRequestId], references: [id], onDelete: Cascade)
+  attendanceEntry AttendanceEntry? @relation(fields: [attendanceEntryId], references: [id], onDelete: Cascade)
+  dataChanges     DataChange[]
+
+  @@unique([accountId, seq])
+  @@index([accountId, status])
+  @@index([employeeId, status])
+  @@map("approval_request")
+}
+
+enum ApprovalType {
+  FIELD_CHANGE
+  LEAVE_REQUEST
+  ATTENDANCE_CORRECTION
+  OTHER
+}
+
+enum ApprovalStatus {
+  PENDING
+  /// Owner asked a clarifying question; waiting on the requester.
+  NEEDS_INFO
+  APPROVED
+  REJECTED
+  /// Withdrawn by the requester.
+  CANCELLED
+  EXPIRED
+}
+
+// ---------------------------------------------------------------------------
+// Audit trail (stories 2.4, 4.8)
+// ---------------------------------------------------------------------------
+
+/// An append-only record of every mutation. Never updated or deleted.
+model DataChange {
+  id        String       @id @default(cuid())
+  accountId String       @map("account_id")
+  entity    SchemaEntity
+  entityId  String       @map("entity_id")
+
+  /// Null when the whole record was created or deleted rather than one field
+  /// being edited.
+  fieldKey      String? @map("field_key")
+  previousValue Json?   @map("previous_value")
+  newValue      Json?   @map("new_value")
+
+  changedByUserId String?      @map("changed_by_user_id")
+  /// Denormalised so history stays readable after a user is deleted.
+  actorRole       UserRole     @map("actor_role")
+  source          ChangeSource
+
+  /// Verbatim human explanation, if one was given.
+  justification String?
+
+  /// Provenance links for replaying how a change came about.
+  messageId         String? @map("message_id")
+  approvalRequestId String? @map("approval_request_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  account         Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  changedBy       User?            @relation(fields: [changedByUserId], references: [id], onDelete: SetNull)
+  message         Message?         @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  approvalRequest ApprovalRequest? @relation(fields: [approvalRequestId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, entity, entityId])
+  @@index([accountId, createdAt])
+  @@map("data_change")
+}
+
+enum ChangeSource {
+  CHAT
+  WEB
+  IMPORT
+  SYSTEM
+  API
+}
+
+// ---------------------------------------------------------------------------
+// Conversations
+// ---------------------------------------------------------------------------
+
+/// A durable chat thread with one person on one channel.
+model Conversation {
+  id        String      @id @default(cuid())
+  accountId String      @map("account_id")
+  userId    String?     @map("user_id")
+  channel   ChannelType
+  /// The channel's own thread identifier — a WhatsApp phone number, or a
+  /// browser session id for the simulator.
+  channelThreadId String @map("channel_thread_id")
+
+  /// Agent working memory: the topic in play, the last entity discussed, any
+  /// half-answered question. Lets the assistant resolve "make it 3pm
+  /// instead" without re-reading the entire transcript on every turn.
+  state Json @default("{}")
+
+  lastMessageAt DateTime? @map("last_message_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  account          Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user             User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  messages         Message[]
+  pendingActions   PendingAction[]
+  approvalRequests ApprovalRequest[]
+
+  @@unique([channel, channelThreadId])
+  @@index([accountId, lastMessageAt])
+  @@map("conversation")
+}
+
+enum ChannelType {
+  WHATSAPP
+  /// The built-in browser harness used to develop and demo without WhatsApp.
+  WEB_SIMULATOR
+  SMS
+  VOICE
+}
+
+model Message {
+  id             String @id @default(cuid())
+  conversationId String @map("conversation_id")
+
+  direction MessageDirection
+  role      MessageRole
+  body      String
+
+  /// Set for photos of handwritten timesheets, voice notes, spreadsheets.
+  mediaUrl  String? @map("media_url")
+  mediaType String? @map("media_type")
+  /// Transcript of a voice note, or OCR text from an image.
+  transcript String?
+
+  /// The channel's message id, used to deduplicate webhook retries.
+  channelMessageId String? @map("channel_message_id")
+
+  /// Populated when `role` is TOOL, for replaying agent decisions.
+  toolName   String? @map("tool_name")
+  toolPayload Json?  @map("tool_payload")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  dataChanges  DataChange[]
+
+  @@unique([conversationId, channelMessageId])
+  @@index([conversationId, createdAt])
+  @@map("message")
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+  TOOL
+}
+
+/// A mutating tool call parked awaiting explicit user confirmation
+/// (story 3.9). The agent may only write to the database by confirming one
+/// of these, which keeps "the model hallucinated a pay change" impossible by
+/// construction rather than by prompt discipline.
+model PendingAction {
+  id             String @id @default(cuid())
+  conversationId String @map("conversation_id")
+
+  toolName  String @map("tool_name")
+  /// Validated tool arguments, ready to execute unchanged on confirmation.
+  arguments Json
+  /// The exact wording shown to the user when asking them to confirm, kept
+  /// so the audit trail shows what they actually agreed to.
+  summary   String
+
+  status    PendingActionStatus @default(AWAITING_CONFIRMATION)
+  expiresAt DateTime            @map("expires_at")
+
+  resolvedAt DateTime? @map("resolved_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, status])
+  @@map("pending_action")
+}
+
+enum PendingActionStatus {
+  AWAITING_CONFIRMATION
+  CONFIRMED
+  CANCELLED
+  EXPIRED
+}
+
+// ---------------------------------------------------------------------------
+// Onboarding, policy, import (stories 1.3, 1.7, 2.6)
+// ---------------------------------------------------------------------------
+
+/// Progress through the conversational onboarding survey (story 1.7).
+/// Persisted because onboarding happens over WhatsApp and may span days.
+model OnboardingSession {
+  id        String @id @default(cuid())
+  accountId String @map("account_id")
+
+  currentStep OnboardingStep @default(BUSINESS_BASICS) @map("current_step")
+  /// Answers collected so far, keyed by step.
+  answers     Json           @default("{}")
+  /// Steps the owner explicitly skipped, so we stop asking.
+  skipped     Json           @default("[]")
+
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@map("onboarding_session")
+}
+
+enum OnboardingStep {
+  BUSINESS_BASICS
+  TEAM_SIZE
+  /// Which facts the owner wants to track — this step generates
+  /// FieldDefinition rows.
+  DATA_TO_TRACK
+  PAY_SETUP
+  SCHEDULE_SETUP
+  POLICY_SURVEY
+  ROSTER_IMPORT
+  COMPLETE
+}
+
+/// A generated or hand-written rule set (story 1.3, vision §3.3).
+model Policy {
+  id        String     @id @default(cuid())
+  accountId String     @map("account_id")
+  kind      PolicyKind
+  name      String
+
+  /// Rule set, shaped by `kind`. For OVERTIME:
+  /// {dailyThresholdHours, weeklyThresholdHours, multiplier}.
+  config Json
+
+  /// Policies are versioned rather than overwritten: attendance approved
+  /// last month must stay explainable under the rules in force at the time.
+  version       Int      @default(1)
+  effectiveFrom DateTime @default(now()) @map("effective_from")
+  effectiveTo   DateTime? @map("effective_to")
+  isActive      Boolean  @default(true) @map("is_active")
+
+  source PolicySource @default(MANUAL)
+  /// Verbatim survey answers that produced this policy, so a surprising rule
+  /// can be traced back to what the owner actually said.
+  sourceTranscript String? @map("source_transcript")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, kind, isActive])
+  @@map("policy")
+}
+
+enum PolicyKind {
+  LEAVE
+  OVERTIME
+  MEAL_BREAK
+  ATTENDANCE
+  PAY_CYCLE
+  HOLIDAY
+}
+
+enum PolicySource {
+  ONBOARDING_SURVEY
+  LLM_GENERATED
+  MANUAL
+  TEMPLATE
+}
+
+/// An uploaded roster in whatever shape it arrived — spreadsheet, document,
+/// or a photo of a handwritten sheet (story 2.6, vision §3.1).
+///
+/// Parsing is staged rather than immediate: the LLM proposes a schema and
+/// rows, a human confirms, and only then are employees written. An owner's
+/// staff list is not something to silently guess at.
+model RosterImport {
+  id        String @id @default(cuid())
+  accountId String @map("account_id")
+  uploadedByUserId String? @map("uploaded_by_user_id")
+
+  fileName String? @map("file_name")
+  mimeType String? @map("mime_type")
+  fileUrl  String? @map("file_url")
+  /// Extracted text or OCR output, kept for re-parsing after prompt changes
+  /// without asking the owner to upload again.
+  rawText  String? @map("raw_text")
+
+  status ImportStatus @default(RECEIVED)
+
+  /// Fields the parser detected, as proposed FieldDefinition shapes, pending
+  /// confirmation.
+  inferredFields Json? @map("inferred_fields")
+  /// Normalised rows, each mapped to inferred field keys.
+  parsedRows     Json? @map("parsed_rows")
+  /// Per-row problems to raise with the owner.
+  issues         Json?
+
+  employeesCreated Int @default(0) @map("employees_created")
+  employeesUpdated Int @default(0) @map("employees_updated")
+
+  appliedAt DateTime? @map("applied_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  account          Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  uploadedBy       User?             @relation(fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  fieldDefinitions FieldDefinition[]
+
+  @@index([accountId, status])
+  @@map("roster_import")
+}
+
+enum ImportStatus {
+  RECEIVED
+  PARSING
+  /// Parsed, waiting for the owner to confirm the proposed schema and rows.
+  NEEDS_REVIEW
+  APPLIED
+  FAILED
+}
+
+/// An outbound message the system owes someone, e.g. welcoming a new hire
+/// (story 2.12). Queued rather than sent inline so channel outages retry.
+model Notification {
+  id        String @id @default(cuid())
+  accountId String @map("account_id")
+  userId     String? @map("user_id")
+  employeeId String? @map("employee_id")
+
+  channel  ChannelType
+  /// Template identifier. WhatsApp requires pre-approved templates for
+  /// business-initiated messages, so the body is not free text.
+  template String
+  /// Template variable values.
+  payload  Json    @default("{}")
+
+  status NotificationStatus @default(QUEUED)
+  error  String?
+  attempts Int @default(0)
+
+  sentAt    DateTime? @map("sent_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  account  Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  user     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  employee Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, status])
+  @@map("notification")
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}

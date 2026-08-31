@@ -1,92 +1,99 @@
 # mycrew
-Chat enabled workforce management platform for micro businesses
 
+Chat-enabled workforce management for micro businesses.
 
-Users:
-1. Company Owner (CO)
-2. Employee (E)
-3. System (S)
+Owners with one to fifteen staff don't want an HR portal. They want to manage
+their team the way they already do — over WhatsApp. mycrew replaces the paper
+register and the group chat with a conversation that keeps proper records:
+attendance, leave, approvals and a compliant audit trail, with no forms, no
+logins and no setup.
 
-User Stories
+- [Product vision](./micro_hcm_product_vision.pdf) — market, strategy, phasing
+- [User stories](./docs/user-stories.md) — the product brief
+- [Architecture](./docs/architecture.md) — how it's built and why
+- [Setup](./docs/setup.md) — getting it running
+- [Status and roadmap](./docs/roadmap.md) — what's built, what's next
 
-1. Account Management
+## Status
 
-As a CO I want to be able to:
-1.1 Create a new workforce account 
-1.2 Manage my workforce account 
-1.3 Configure policies for my workforce account 
-1.4 Perform my tasks using a chat interface
+**Foundation.** The architecture, data model and safety properties are built and
+tested; most conversational features are not. You can hold a real conversation
+that reads and changes staff records — with permissions, approvals, confirmation
+and audit all working end to end. Clocking in and leave requests are next. See
+the [roadmap](./docs/roadmap.md) for a story-by-story breakdown.
 
-As a S I want to be able to:
-1.5 Initiate a new account based on user inputs
-1.6 Edit account details based on user inputs
-1.7 Provide step-by-step guidance to CO during onboarding from company details, to number of employees, type of employee data to capture - basic pay, attendance, schedules, free feedback notes, features they want to use (to be defined later e.g. attendance)
-1.8 Keep the employee database structure flexible to allow for new types of fields to be added based on new information user may want to capture in future 
+## Quickstart
 
-2. Employee Management
+Needs Node 20+ and a Neon Postgres database.
 
-As a CO I want to be able to:
-2.1 Onboard new employees 
-2.2 Edit existing employee information
-2.3 Pull records of all employees 
-2.4 View history of data changes
-2.5 Perform my tasks using chat interface
-2.6 Perform my tasks using direct text inputs or uploading a document 
+```bash
+npm install
+cp .env.example .env        # add your Neon connection strings
+npm run db:generate
+npm run db:migrate
+npm run db:seed
+npm run dev
+```
 
-As an E I want to be able to:
-2.7 View my job information
-2.8 Make changes to my job information
-2.9 Know which information I am allowed to change vs not
-2.10 Perform my tasks using a chat interface
+Open http://localhost:3000. Pick who you're chatting as in the sidebar — the
+owner and the two staff members have different permissions, which is the most
+interesting thing to try.
 
-As a S I want to be able to:
-2.11 Update the employee database as per inputs
-2.12 Notify employees upon new registration / onboarding by CO
+It runs without an LLM API key: a deterministic mock provider understands a
+handful of set phrases so the whole stack works offline. Set
+`MYCREW_LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` for real conversation.
 
-3. Request Management
+```bash
+npm test          # 64 tests, no database needed
+npm run typecheck
+```
 
-As an E I want to be able to:
-3.1 Submit change request for a data that requires approval
-3.2 Check the status of my requests 
-3.3 Check the status of my requests using either an ID, or a date or a text based description / context
+## How it fits together
 
-As a CO I want to be able to:
-3.4 Retrieve a list of all open requests 
-3.5 Ask the system to take a bulk action based on my free form text
-3.6 Provide a decision on one or more requests 
+```
+   WhatsApp        Web simulator          (future: SMS, voice)
+       └────────┬─────────┘
+                ▼
+        ChannelAdapter                    packages/channels
+                ▼
+        handleInboundMessage              packages/core/services
+                ▼
+         Agent runtime                    packages/core/agent
+   confirmation gate · tool loop
+      ┌─────────┴─────────┐
+      ▼                   ▼
+  LlmProvider          Tools             packages/llm · core/tools
+ (mock | Claude)          ▼
+                 Dynamic schema engine    packages/core/schema
+              coerce · validate · authorize
+                          ▼
+                  Prisma · Neon Postgres  packages/db
+```
 
-As a S I want to be able to:
-3.7 Pull up a list of requests 
-3.8 Ask clarifying follow up questions when there are multiple results to a user input
-3.9 Always make sure I confirm with the user before making a write transaction. 
+| Package | Contains |
+| --- | --- |
+| `packages/db` | Prisma schema (15 models), client, seed |
+| `packages/core` | Schema engine, agent runtime, services, tools |
+| `packages/llm` | Provider interface; mock and Claude implementations |
+| `packages/channels` | Channel abstraction; WhatsApp and web simulator |
+| `apps/web` | Next.js app — API routes and the chat simulator |
 
+## The two ideas that shape everything
 
-4. Leave and Attendance
+**The schema is data, not code.** Every micro-business tracks different things
+about its staff, so `FieldDefinition` rows *are* the account's schema. They
+compile at runtime into the validators and permission rules that guard every
+write to a record's `attributes` column. Adding a field is an `INSERT`, not a
+migration — while pay rates stay typed and payroll maths stays safe.
 
-As an E I want to be able to:
-4.1 Record my attendance by sending a message
-4.2 Record a leave request
-4.3 Edit my existing leaves 
-4.4 Provide a justification of my attendance or leave through free text
+**The model never writes.** A mutating tool call is parked with a plain-language
+summary of exactly what will happen, and the user is asked to confirm. Their
+yes or no is interpreted by ordinary code before the model is consulted at all,
+because a model that misreads "no, not that one" would change someone's pay.
+It's a structural guarantee, not a prompt instruction.
 
-As a CO I want to be able to:
-4.4 View my employee's leave requests 
-4.5 Action leave requests 
-4.6 Pull a record of attendance and leaves 
+Both are explained in more depth in the [architecture doc](./docs/architecture.md).
 
-As a S I want to be able to:
-4.7 Prevent an employee from editing their attendance 
-4.8 Record employee and CO conversations or justifications (as-is) in context to a specific leave or attendance 
-4.9 Automatically determine if the employee is marking a late attendance-in or early out and ask for justification
-5.0 Forward leave requests to CO 
-5.1 Automatically manage leave and attendance workflows between E and CO.
+## Licence
 
-5. User Experience
-
-As a CO and E I want to be able to:
-5.1 Interact with the system via my WhatsApp number / account 
-   
-
-
-
-3. 
+MIT — see [LICENSE](./LICENSE).

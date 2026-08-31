@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    // Prisma 7's generated client imports its own modules with explicit .ts
+    // extensions, so consumers must allow that.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/**/*.ts", "prisma/**/*.ts", "prisma.config.ts"],
+  "exclude": ["src/generated/**"]
+}

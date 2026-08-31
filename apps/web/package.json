@@ -1,0 +1,25 @@
+{
+  "name": "@mycrew/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@mycrew/channels": "^0.1.0",
+    "@mycrew/core": "^0.1.0",
+    "@mycrew/db": "^0.1.0",
+    "@mycrew/llm": "^0.1.0",
+    "dotenv": "^17.4.2",
+    "next": "^16.3.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "mycrew",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chat-native workforce management platform for micro businesses",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run db:generate && npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "dev": "npm run dev -w @mycrew/web",
+    "db:generate": "npm run generate -w @mycrew/db",
+    "db:migrate": "npm run migrate -w @mycrew/db",
+    "db:deploy": "npm run deploy -w @mycrew/db",
+    "db:studio": "npm run studio -w @mycrew/db",
+    "db:seed": "npm run seed -w @mycrew/db",
+    "setup": "npm install && npm run db:generate && npm run db:migrate && npm run db:seed"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "dotenv-cli": "^11.0.0",
+    "prisma": "^7.10.0",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  },
+  "allowScripts": {
+    "@prisma/engines@7.10.0": true,
+    "esbuild@0.28.2": true,
+    "fsevents@2.3.3": true,
+    "prisma@7.10.0": true
+  }
+}
