@@ -258,14 +258,16 @@ const updateEmployeeFields: ToolDefinition<
     if (gated) parts.push(`ask your manager to approve ${who} ${gated}`);
 
     if (parts.length === 0) {
-      // Nothing will happen; say why rather than asking to confirm a no-op.
+      // Well-formed but inert: not permitted, or already that value. Report
+      // the reason instead of prompting for a confirmation that would do
+      // nothing.
       const reason =
         resolution.rejected[0]?.message ??
-        "that's already the value on file";
-      return `Just so you know: ${reason}`;
+        `That's already what I have for ${who} record.`;
+      return { willChange: false, message: reason };
     }
 
-    return `I'll ${parts.join(", and ")}.`;
+    return { willChange: true, summary: `I'll ${parts.join(", and ")}.` };
   },
 
   async execute(input, context) {

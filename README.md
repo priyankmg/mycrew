@@ -12,15 +12,21 @@ logins and no setup.
 - [User stories](./docs/user-stories.md) — the product brief
 - [Architecture](./docs/architecture.md) — how it's built and why
 - [Setup](./docs/setup.md) — getting it running
+- [Verification](./docs/verification.md) — how to check the foundation holds
 - [Status and roadmap](./docs/roadmap.md) — what's built, what's next
 
 ## Status
 
-**Foundation.** The architecture, data model and safety properties are built and
-tested; most conversational features are not. You can hold a real conversation
-that reads and changes staff records — with permissions, approvals, confirmation
-and audit all working end to end. Clocking in and leave requests are next. See
-the [roadmap](./docs/roadmap.md) for a story-by-story breakdown.
+**Foundation, pending sign-off.** The architecture, data model and safety
+properties are built, and the logic is covered by 67 tests that need neither a
+database nor a network. You can read and change staff records in conversation,
+with field-level permissions, approvals, confirmation and audit.
+
+Not yet confirmed: migrations have never run against a live Postgres, because
+there were no credentials at build time. Doing that is the first step in
+[verification](./docs/verification.md). Most conversational features — clocking
+in, leave, shifts — are data model only; see the
+[roadmap](./docs/roadmap.md) for a story-by-story breakdown.
 
 ## Quickstart
 

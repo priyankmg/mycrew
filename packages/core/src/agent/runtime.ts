@@ -14,6 +14,7 @@ import type { ConversationStore, StoredMessage } from "./store.ts";
 import {
   ToolInputError,
   type ToolContext,
+  type ToolPreview,
   type ToolRegistry,
   type ToolResult,
 } from "./tools.ts";
@@ -179,9 +180,33 @@ export function createAgentRuntime(deps: AgentRuntimeDeps) {
       }
 
       if (tool.mutates) {
-        const summary = tool.summarize
-          ? await tool.summarize(parsed, toolContext)
-          : `I'll ${describeToolName(tool.name)}.`;
+        let preview: ToolPreview;
+        try {
+          preview = tool.summarize
+            ? await tool.summarize(parsed, toolContext)
+            : {
+                willChange: true,
+                summary: `I'll ${describeToolName(tool.name)}.`,
+              };
+        } catch (error) {
+          // A tool can only discover some problems by looking things up —
+          // most often that a name matches two people. Those come back as a
+          // question already phrased for the user, so ask it directly rather
+          // than looping the model round again on the same input.
+          if (error instanceof ToolInputError) {
+            return reply(conversationId, error.message, { executed });
+          }
+          throw error;
+        }
+
+        // Nothing would actually change — the value is already set, or the
+        // caller isn't allowed to set it. Say so rather than asking them to
+        // confirm something that cannot happen.
+        if (!preview.willChange) {
+          return reply(conversationId, preview.message, { executed });
+        }
+
+        const { summary } = preview;
 
         await store.createPendingAction({
           conversationId,
@@ -209,7 +234,15 @@ export function createAgentRuntime(deps: AgentRuntimeDeps) {
         };
       }
 
-      const result = await tool.execute(parsed, toolContext);
+      let result: ToolResult;
+      try {
+        result = await tool.execute(parsed, toolContext);
+      } catch (error) {
+        if (error instanceof ToolInputError) {
+          return reply(conversationId, error.message, { executed });
+        }
+        throw error;
+      }
       executed.push(tool.name);
 
       await store.appendMessage({

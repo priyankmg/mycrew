@@ -31,6 +31,19 @@ export interface ToolResult {
   data?: unknown;
 }
 
+/**
+ * A mutating tool's answer to "what would happen if I ran this?", produced
+ * before anything is written.
+ *
+ * The `willChange: false` case matters: a request can be perfectly well-formed
+ * and still change nothing — the value is already set, or the caller isn't
+ * permitted to set it. Asking someone to confirm a change that cannot happen
+ * is a confusing dead end, so the runtime says why instead of prompting.
+ */
+export type ToolPreview =
+  | { willChange: true; summary: string }
+  | { willChange: false; message: string };
+
 export interface ToolDefinition<TInput = unknown> {
   name: string;
   description: string;
@@ -52,10 +65,14 @@ export interface ToolDefinition<TInput = unknown> {
   mutates: boolean;
 
   /**
-   * One-line description of the pending change, shown when asking the user
-   * to confirm. Must state exactly what will happen.
+   * Describe what running this would do, without doing it. Required for
+   * mutating tools: the confirmation prompt has to state exactly what will
+   * happen, and the user has to be able to refuse it.
    */
-  summarize?(input: TInput, context: ToolContext): Promise<string> | string;
+  summarize?(
+    input: TInput,
+    context: ToolContext,
+  ): Promise<ToolPreview> | ToolPreview;
 
   execute(input: TInput, context: ToolContext): Promise<ToolResult>;
 }
@@ -79,7 +96,10 @@ export interface RegisteredTool {
   inputSchema: JsonSchemaObject;
   mutates: boolean;
   parse(input: unknown): unknown;
-  summarize?(parsed: unknown, context: ToolContext): Promise<string> | string;
+  summarize?(
+    parsed: unknown,
+    context: ToolContext,
+  ): Promise<ToolPreview> | ToolPreview;
   execute(parsed: unknown, context: ToolContext): Promise<ToolResult>;
 }
 

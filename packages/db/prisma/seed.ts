@@ -10,7 +10,7 @@
  * starting schema, which would drift. The dependency direction is only
  * acceptable because this is a standalone script that core never imports.
  */
-import { addField, seedSystemFields } from "@mycrew/core";
+import { addField, seedSystemFields, toFieldKey } from "@mycrew/core";
 
 import { prisma } from "../src/client.ts";
 
@@ -67,15 +67,21 @@ async function main(): Promise<void> {
 
   // A field no product designer chose in advance — the case story 1.8 exists
   // for. Added at runtime, with no migration.
+  //
+  // The key is derived from the label by `toFieldKey`, so it is computed here
+  // rather than written out: hard-coding it once drifted from the label and
+  // made this check never match, which silently created a duplicate field on
+  // every reseed.
+  const customFieldLabel = "Food handler card expiry";
   const existingCustom = await prisma.fieldDefinition.findFirst({
-    where: { accountId: account.id, key: "food_handler_expiry" },
+    where: { accountId: account.id, key: toFieldKey(customFieldLabel) },
     select: { id: true },
   });
   if (!existingCustom) {
     await addField({
       accountId: account.id,
       entity: "EMPLOYEE",
-      label: "Food handler card expiry",
+      label: customFieldLabel,
       dataType: "DATE",
       // Staff can ask to update it; the owner confirms, since it is a
       // compliance record.

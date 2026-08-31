@@ -146,7 +146,11 @@ function writeTool(recorded: Recorded): ToolDefinition<{ rate: number }> {
       }
       return { rate };
     },
-    summarize: (input) => `I'll set the pay rate to £${input.rate}.`,
+    summarize: (input) =>
+      // A negative rate stands in for "well-formed but nothing will happen".
+      input.rate < 0
+        ? { willChange: false, message: "Pay rate can't be negative." }
+        : { willChange: true, summary: `I'll set the pay rate to £${input.rate}.` },
     async execute(input) {
       recorded.calls.push(input);
       return { message: `Done — pay rate is now £${input.rate}.` };
@@ -254,6 +258,25 @@ describe("agent runtime", () => {
     assert.match(reply.text, /Shall I go ahead\?/);
     assert.deepEqual(reply.quickReplies, ["Yes", "No"]);
     assert.equal(store.pending.length, 1);
+  });
+
+  it("explains instead of prompting when nothing would change", async () => {
+    // Being asked "shall I go ahead?" about a change that cannot happen is a
+    // dead end, so no pending action should be parked at all.
+    const { runtime } = runtimeWith([
+      toolUse("update_employee_fields", { rate: -5 }),
+    ]);
+
+    const reply = await runtime.runTurn({
+      message: "set the pay rate to -5",
+      toolContext: CONTEXT,
+      prompt: PROMPT,
+    });
+
+    assert.deepEqual(recorded.calls, []);
+    assert.equal(store.pending.length, 0);
+    assert.equal(reply.awaitingConfirmation, undefined);
+    assert.equal(reply.text, "Pay rate can't be negative.");
   });
 
   it("performs the write once the user says yes", async () => {
@@ -370,6 +393,62 @@ describe("agent runtime", () => {
     });
 
     assert.deepEqual(recorded.calls, []);
+  });
+
+  it("asks the user directly when a tool needs a lookup it can't resolve", async () => {
+    // The common case is a name matching two people. The question is already
+    // phrased for the user, so it should be asked rather than fed back to the
+    // model — which, given identical input, would just call the tool again.
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "get_employee_record",
+      description: "Read a record.",
+      inputSchema: OBJECT_SCHEMA,
+      mutates: false,
+      parse: () => ({}),
+      execute: () => {
+        throw new ToolInputError("There's more than one Sam. Which one?");
+      },
+    });
+    const provider = scriptedProvider([toolUse("get_employee_record", {})]);
+    const runtime = createAgentRuntime({ provider, registry, store });
+
+    const reply = await runtime.runTurn({
+      message: "what is sam paid?",
+      toolContext: CONTEXT,
+      prompt: PROMPT,
+    });
+
+    assert.equal(reply.text, "There's more than one Sam. Which one?");
+  });
+
+  it("asks the user directly when a mutating tool can't resolve its target", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "update_employee_fields",
+      description: "Change a record.",
+      inputSchema: OBJECT_SCHEMA,
+      mutates: true,
+      parse: () => ({}),
+      summarize: () => {
+        throw new ToolInputError("Which member of staff did you mean?");
+      },
+      execute: async () => ({ message: "should never run" }),
+    });
+    const provider = scriptedProvider([
+      toolUse("update_employee_fields", { rate: 20 }),
+    ]);
+    const runtime = createAgentRuntime({ provider, registry, store });
+
+    const reply = await runtime.runTurn({
+      message: "update the pay rate to 20",
+      toolContext: CONTEXT,
+      prompt: PROMPT,
+    });
+
+    assert.equal(reply.text, "Which member of staff did you mean?");
+    // Crucially, no write was parked against an unknown target.
+    assert.equal(store.pending.length, 0);
   });
 
   it("asks the model to clarify when tool arguments are unusable", async () => {
