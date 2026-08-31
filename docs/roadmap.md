@@ -120,18 +120,18 @@ Added after the original brief; design in [security.md](./security.md).
 | 6.1 | Be told plainly who can see the data | Not started — documented, not surfaced in product |
 | 6.2 | Encrypted in transit and at rest | Partial — TLS on every hop; no application-level encryption |
 | 6.3 | Provide bank details / IDs outside chat | Not started |
-| 6.4 | Mark any field confidential | Not started — needs `sensitivity` on `FieldDefinition` |
+| 6.4 | Mark any field confidential | **Done** in the schema — `sensitivity` on `FieldDefinition`, default confidential; nothing acts on it yet beyond redaction |
 | 6.5 | Staff cannot see each other's records | **Done** — schema engine `visibility`, enforced in one path |
 | 6.6 | Transcripts not retained indefinitely | Not started |
 | 6.7 | Details not visible to colleagues | **Done** (same mechanism as 6.5) |
 | 6.8 | Share a document without it living in chat | Not started |
 | 6.9 | Encrypt confidential fields per account | Not started |
 | 6.10 | Reject unsigned webhooks, no fallback | **Done** — HMAC-SHA256, unit-tested |
-| 6.11 | Never log message bodies or values | Not started — chat route returns raw error text |
+| 6.11 | Never log message bodies or values | **Done** for errors — messages withheld from logs and from responses outside development; `schema.redact()` available for attribute bags |
 | 6.12 | Minimise data sent to the LLM | Partial — role projection exists; no sensitivity filter |
-| 6.13 | Redact sensitive values pasted into chat | Not started |
+| 6.13 | Redact sensitive values pasted into chat | Not started — `acceptsChatInput()` exists, inbound path doesn't consult it |
 | 6.14 | Scope every query by account | **Done** by convention — no test enforces it |
-| 6.15 | Require auth on non-chat surfaces | Not started — largest open hole |
+| 6.15 | Require auth on non-chat surfaces | Partial — simulator closed in production (404 unless `MYCREW_SIMULATOR_TOKEN`); owner accounts still unbuilt |
 
 ## Suggested next steps
 
@@ -141,26 +141,27 @@ it is what makes it safe to put real staff data in.
 
 ### 0. Confidentiality groundwork (stories 6.1–6.15)
 
-Design in [security.md](./security.md). The subset that gates a deployment
-holding real data, smallest first:
+Design in [security.md](./security.md). **This step is done** — the three items
+that gated a deployment holding real data:
 
-- **Authentication on the non-chat surfaces.** There is none today; the
-  simulator lets you pick any user. This alone blocks exposing a hosted
-  deployment.
-- **`sensitivity` on `FieldDefinition`**, defaulting to confidential, with the
-  system fields classified. Cheap while the table is small and a migration over
-  live data later.
-- **Log redaction**, and put the raw error text the chat route returns behind a
-  development-only flag.
+- ✅ **The simulator is closed on a deployment.** Both endpoints answer 404 when
+  `NODE_ENV=production` unless `MYCREW_SIMULATOR_TOKEN` is set, with one
+  response for "off" and "wrong token". Owner accounts are still unbuilt, so
+  story 6.15 is partial, not closed.
+- ✅ **`sensitivity` on `FieldDefinition`**, defaulting to confidential, system
+  fields classified, and `sensitivityOf` / `acceptsChatInput` / `redact` on the
+  compiled schema so consumers ask the schema instead of keeping their own list.
+- ✅ **Errors no longer carry their message** into logs or responses outside
+  development, because Prisma puts the values it was given into the message.
 
-Then, before a first paying customer: envelope encryption for confidential
-fields (with key versioning from the first commit), secure-link collection for
-bank details and government identifiers so those never enter a chat message, a
-transcript retention job, and a zero-retention agreement with Anthropic.
+Done in this order because steps 1–3 below all write employee data, and
+retrofitting a classification once several tools depend on the schema shape
+costs more than adding it first.
 
-Worth doing in this order because items 1–3 below all write employee data, and
-retrofitting a sensitivity classification after several tools depend on the
-schema shape is more expensive than adding it now.
+Still open before a first paying customer: envelope encryption for confidential
+fields (with key versioning from the first commit), secure-link collection so
+bank details and government identifiers never enter a chat message, a transcript
+retention job, and a zero-retention agreement with Anthropic.
 
 ### 1. Attendance tools (stories 4.1, 4.9)
 

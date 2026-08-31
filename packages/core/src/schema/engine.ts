@@ -8,6 +8,7 @@ import {
 import type {
   AttributeBag,
   AttributeValue,
+  FieldSensitivity,
   FieldSpec,
   FieldWriteError,
   SchemaEntity,
@@ -54,6 +55,32 @@ export interface CompiledSchema {
   ): InitializeResult;
   project(attributes: AttributeBag, actor: WriteActor): ProjectedField[];
   describePermissions(actor: WriteActor): string[];
+
+  /**
+   * How confidential a field is (story 6.4).
+   *
+   * An unknown key answers `RESTRICTED`, not `NORMAL`. Callers use this to
+   * decide whether a value may be logged or sent to a model, so a typo or a
+   * field from another entity must fail towards silence.
+   */
+  sensitivityOf(key: string): FieldSensitivity;
+
+  /**
+   * Whether a value for this field may be accepted in a chat message.
+   *
+   * False for `RESTRICTED`. WhatsApp message content is processed by Meta in
+   * transit, so bank details and government identifiers are collected through
+   * a single-use link instead (docs/security.md).
+   */
+  acceptsChatInput(key: string): boolean;
+
+  /**
+   * A copy of an attribute bag safe to put in a log line or an error report
+   * (story 6.11). Confidential values are replaced by a placeholder naming
+   * their classification, so the shape of a problem stays debuggable while the
+   * values do not travel.
+   */
+  redact(attributes: AttributeBag): Record<string, AttributeValue>;
 }
 
 /**
@@ -68,7 +95,16 @@ export function compileSchema(
   entity: SchemaEntity,
   specs: readonly FieldSpec[],
 ): CompiledSchema {
-  const relevant = specs.filter((spec) => spec.entity === entity);
+  // Resolve the sensitivity default here, once, rather than at each call site.
+  // An absent classification means nobody has considered the field, so it is
+  // treated as confidential — the column default says the same thing, and the
+  // two must not disagree.
+  const relevant: readonly FieldSpec[] = specs
+    .filter((spec) => spec.entity === entity)
+    .map((spec) => ({
+      ...spec,
+      sensitivity: spec.sensitivity ?? "CONFIDENTIAL",
+    }));
   const byKey = new Map(relevant.map((spec) => [spec.key, spec]));
 
   function resolveWrite(input: ResolveWriteInput): WriteResolution {
@@ -230,6 +266,25 @@ export function compileSchema(
       .map((spec) => describeEditPolicy(spec));
   }
 
+  function sensitivityOf(key: string): FieldSensitivity {
+    // Unknown keys are treated as the most sensitive value, so a mistake
+    // withholds data rather than exposing it.
+    return byKey.get(key)?.sensitivity ?? "RESTRICTED";
+  }
+
+  function acceptsChatInput(key: string): boolean {
+    return sensitivityOf(key) !== "RESTRICTED";
+  }
+
+  function redact(attributes: AttributeBag): Record<string, AttributeValue> {
+    const safe: Record<string, AttributeValue> = {};
+    for (const [key, value] of Object.entries(attributes)) {
+      const level = sensitivityOf(key);
+      safe[key] = level === "NORMAL" ? value : `[${level.toLowerCase()}]`;
+    }
+    return safe;
+  }
+
   return {
     entity,
     fields: relevant,
@@ -238,6 +293,9 @@ export function compileSchema(
     initialize,
     project,
     describePermissions,
+    sensitivityOf,
+    acceptsChatInput,
+    redact,
   };
 }
 

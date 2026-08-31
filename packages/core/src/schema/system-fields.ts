@@ -22,6 +22,7 @@ export const SYSTEM_EMPLOYEE_FIELDS: readonly FieldSpec[] = [
     isRequired: false,
     editPolicy: "OWNER_ONLY",
     visibility: "EMPLOYEE_VISIBLE",
+    sensitivity: "CONFIDENTIAL",
     validation: { min: 0, precision: 2 },
   },
   {
@@ -32,6 +33,9 @@ export const SYSTEM_EMPLOYEE_FIELDS: readonly FieldSpec[] = [
     isRequired: false,
     editPolicy: "OWNER_ONLY",
     visibility: "EMPLOYEE_VISIBLE",
+    // "Hourly" on its own reveals nothing; the rate it applies to does. Kept
+    // NORMAL so the distinction between this and pay_rate stays visible.
+    sensitivity: "NORMAL",
     options: [
       { value: "hourly", label: "Per hour" },
       { value: "daily", label: "Per day" },
@@ -50,6 +54,8 @@ export const SYSTEM_EMPLOYEE_FIELDS: readonly FieldSpec[] = [
     // Staff own this information, so they can change it without asking.
     editPolicy: "EMPLOYEE_DIRECT",
     visibility: "EMPLOYEE_VISIBLE",
+    // Names a third party who never agreed to be in our database.
+    sensitivity: "CONFIDENTIAL",
   },
   {
     key: "emergency_contact_phone",
@@ -59,6 +65,7 @@ export const SYSTEM_EMPLOYEE_FIELDS: readonly FieldSpec[] = [
     isRequired: false,
     editPolicy: "EMPLOYEE_DIRECT",
     visibility: "EMPLOYEE_VISIBLE",
+    sensitivity: "CONFIDENTIAL",
   },
   {
     key: "owner_notes",
@@ -71,6 +78,9 @@ export const SYSTEM_EMPLOYEE_FIELDS: readonly FieldSpec[] = [
     // Story 1.7 asks for "free feedback notes". Those must not be visible to
     // the person they are about.
     visibility: "OWNER_ONLY",
+    // Unstructured opinion about a named person: the field most likely to
+    // contain something nobody would want disclosed.
+    sensitivity: "CONFIDENTIAL",
   },
 ];
 
@@ -92,6 +102,7 @@ export const FIELD_TEMPLATES: readonly FieldSpec[] = [
     isRequired: false,
     editPolicy: "OWNER_ONLY",
     visibility: "EMPLOYEE_VISIBLE",
+    sensitivity: "NORMAL",
   },
   {
     key: "home_address",
@@ -101,6 +112,7 @@ export const FIELD_TEMPLATES: readonly FieldSpec[] = [
     isRequired: false,
     editPolicy: "EMPLOYEE_DIRECT",
     visibility: "EMPLOYEE_VISIBLE",
+    sensitivity: "CONFIDENTIAL",
   },
   {
     key: "date_of_birth",
@@ -112,6 +124,7 @@ export const FIELD_TEMPLATES: readonly FieldSpec[] = [
     // than being self-service.
     editPolicy: "EMPLOYEE_REQUEST",
     visibility: "EMPLOYEE_VISIBLE",
+    sensitivity: "CONFIDENTIAL",
   },
   {
     key: "preferred_shift",
@@ -121,6 +134,7 @@ export const FIELD_TEMPLATES: readonly FieldSpec[] = [
     isRequired: false,
     editPolicy: "EMPLOYEE_DIRECT",
     visibility: "EMPLOYEE_VISIBLE",
+    sensitivity: "NORMAL",
     options: [
       { value: "morning", label: "Morning" },
       { value: "afternoon", label: "Afternoon" },
@@ -137,6 +151,7 @@ export const FIELD_TEMPLATES: readonly FieldSpec[] = [
     isRequired: false,
     editPolicy: "EMPLOYEE_REQUEST",
     visibility: "EMPLOYEE_VISIBLE",
+    sensitivity: "NORMAL",
     options: [
       { value: "food_handler", label: "Food handler card" },
       { value: "alcohol_service", label: "Alcohol service" },
@@ -155,5 +170,34 @@ export const FIELD_TEMPLATES: readonly FieldSpec[] = [
     // fact.
     editPolicy: "SYSTEM_ONLY",
     visibility: "EMPLOYEE_VISIBLE",
+    // A record of where a named person physically was, which is worth more
+    // care than its operational purpose suggests.
+    sensitivity: "CONFIDENTIAL",
+  },
+
+  // The two below exist to make RESTRICTED concrete rather than theoretical.
+  // Payroll needs them from Phase 2, and both are examples of data that must
+  // never arrive in a chat message: Meta processes WhatsApp message content in
+  // transit, so they are collected through a single-use link instead
+  // (docs/security.md).
+  {
+    key: "national_id",
+    label: "Government ID number",
+    entity: "EMPLOYEE",
+    dataType: "TEXT",
+    isRequired: false,
+    editPolicy: "EMPLOYEE_DIRECT",
+    visibility: "OWNER_ONLY",
+    sensitivity: "RESTRICTED",
+  },
+  {
+    key: "bank_account",
+    label: "Bank account details",
+    entity: "EMPLOYEE",
+    dataType: "TEXT",
+    isRequired: false,
+    editPolicy: "EMPLOYEE_DIRECT",
+    visibility: "OWNER_ONLY",
+    sensitivity: "RESTRICTED",
   },
 ];

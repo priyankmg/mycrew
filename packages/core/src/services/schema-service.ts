@@ -35,6 +35,7 @@ export function toFieldSpec(row: {
   isRequired: boolean;
   editPolicy: FieldSpec["editPolicy"];
   visibility: FieldSpec["visibility"];
+  sensitivity: NonNullable<FieldSpec["sensitivity"]>;
   description: string | null;
   options: unknown;
   validation: unknown;
@@ -48,6 +49,7 @@ export function toFieldSpec(row: {
     isRequired: row.isRequired,
     editPolicy: row.editPolicy,
     visibility: row.visibility,
+    sensitivity: row.sensitivity,
     description: row.description,
     options: (row.options ?? null) as FieldOption[] | null,
     validation: (row.validation ?? null) as FieldValidation | null,
@@ -86,6 +88,7 @@ export async function seedSystemFields(accountId: string): Promise<number> {
       isCore: true,
       editPolicy: spec.editPolicy,
       visibility: spec.visibility,
+      sensitivity: spec.sensitivity ?? "CONFIDENTIAL",
       options: (spec.options ?? null) as never,
       validation: (spec.validation ?? null) as never,
       defaultValue: (spec.defaultValue ?? null) as never,
@@ -105,6 +108,12 @@ export interface AddFieldInput {
   isRequired?: boolean;
   editPolicy?: FieldSpec["editPolicy"];
   visibility?: FieldSpec["visibility"];
+  /**
+   * Omitted means confidential (story 6.4). A caller that knows a field is
+   * harmless says so explicitly; a caller that has not thought about it — the
+   * LLM inferring a column from a spreadsheet, say — gets the careful answer.
+   */
+  sensitivity?: FieldSpec["sensitivity"];
   options?: readonly FieldOption[];
   validation?: FieldValidation;
   description?: string;
@@ -143,6 +152,7 @@ export async function addField(input: AddFieldInput): Promise<FieldSpec> {
       isRequired: input.isRequired ?? false,
       editPolicy: input.editPolicy ?? "OWNER_ONLY",
       visibility: input.visibility ?? "OWNER_ONLY",
+      sensitivity: input.sensitivity ?? "CONFIDENTIAL",
       options: (input.options ?? null) as never,
       validation: (input.validation ?? null) as never,
       source: input.source ?? "MANUAL",

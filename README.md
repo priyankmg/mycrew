@@ -123,9 +123,15 @@ matters. Phase 1 answers it, and answers it accurately:
   our webhook — true of every business on WhatsApp. That belongs in the first
   line of a security answer, not the footnotes.
 
-Designed but **not yet built**: authentication, encryption and redaction are
-step 0 of the [roadmap](./docs/roadmap.md). The full design, including what we
-will and won't claim to customers, is in [security.md](./docs/security.md).
+**Built so far:** field sensitivity is part of the schema and defaults to
+confidential, errors no longer carry their message into logs or responses, and
+the chat simulator refuses to answer on a production deployment.
+**Not yet built:** the encryption itself, and the secure-link collection flow.
+So today's accurate claim is "encrypted in transit, and at rest by the
+database" — not the per-account key story above, which is the next step.
+
+The full design, including exactly what we will and won't say to customers, is
+in [security.md](./docs/security.md).
 
 ## Licence
 

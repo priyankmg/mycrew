@@ -7,7 +7,8 @@
     "// build": "Vercel runs this script from apps/web, not the repo root, so the build cannot assume the root script already generated the Prisma client. --prefix gives packages/db as the cwd so prisma.config.ts is found. Offline codegen; no database needed.",
     "build": "npm --prefix ../../packages/db run generate && next build",
     "start": "next start",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test \"lib/**/*.test.ts\""
   },
   "dependencies": {
     "@mycrew/channels": "^0.1.0",

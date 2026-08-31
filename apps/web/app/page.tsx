@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { simulatorHeaders } from "@/lib/simulator-client.ts";
+
 interface Person {
   id: string;
   displayName: string;
@@ -46,7 +48,9 @@ export default function ChatSimulator() {
 
     void (async () => {
       try {
-        const response = await fetch("/api/users");
+        const response = await fetch("/api/users", {
+          headers: simulatorHeaders(),
+        });
         const data = (await response.json()) as {
           users?: Person[];
           provider?: string;
@@ -108,7 +112,7 @@ export default function ChatSimulator() {
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...simulatorHeaders() },
         body: JSON.stringify({ userId: activeId, message: trimmed }),
       });
 

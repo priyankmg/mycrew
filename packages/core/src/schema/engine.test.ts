@@ -338,3 +338,65 @@ describe("field keys", () => {
     assert.equal(uniqueFieldKey("Full name", []), "full_name_field");
   });
 });
+
+describe("confidentiality classification", () => {
+  it("treats an unclassified field as confidential", () => {
+    // `shirt_size` is declared above with no sensitivity, which stands for
+    // every field an owner invents without being asked about privacy. Silence
+    // must not read as "harmless".
+    assert.equal(schema.sensitivityOf("shirt_size"), "CONFIDENTIAL");
+  });
+
+  it("keeps declared classifications", () => {
+    assert.equal(schema.sensitivityOf("pay_rate"), "CONFIDENTIAL");
+    assert.equal(schema.sensitivityOf("pay_basis"), "NORMAL");
+  });
+
+  it("treats an unknown key as restricted", () => {
+    // Callers ask this before logging a value or putting it in a prompt, so a
+    // typo has to fail towards silence rather than disclosure.
+    assert.equal(schema.sensitivityOf("no_such_field"), "RESTRICTED");
+    assert.equal(schema.acceptsChatInput("no_such_field"), false);
+  });
+
+  it("refuses chat input only for restricted fields", () => {
+    const withRestricted = compileSchema("EMPLOYEE", [
+      ...FIELDS,
+      {
+        key: "bank_account",
+        label: "Bank account details",
+        entity: "EMPLOYEE",
+        dataType: "TEXT",
+        isRequired: false,
+        editPolicy: "EMPLOYEE_DIRECT",
+        visibility: "OWNER_ONLY",
+        sensitivity: "RESTRICTED",
+      },
+    ]);
+
+    assert.equal(withRestricted.acceptsChatInput("pay_basis"), true);
+    assert.equal(withRestricted.acceptsChatInput("pay_rate"), true);
+    assert.equal(withRestricted.acceptsChatInput("bank_account"), false);
+  });
+
+  it("redacts everything but normal fields, keeping the shape", () => {
+    const safe = schema.redact({
+      pay_basis: "hourly",
+      pay_rate: 18.5,
+      emergency_contact_name: "Alex Ortiz",
+    });
+
+    // The keys survive so a log line still shows which fields were involved.
+    assert.deepEqual(safe, {
+      pay_basis: "hourly",
+      pay_rate: "[confidential]",
+      emergency_contact_name: "[confidential]",
+    });
+  });
+
+  it("redacts a value whose field it has never heard of", () => {
+    assert.deepEqual(schema.redact({ mystery: "sensitive-looking" }), {
+      mystery: "[restricted]",
+    });
+  });
+});

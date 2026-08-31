@@ -5,6 +5,9 @@ import {
 import { createToolRegistry, handleInboundMessage } from "@mycrew/core";
 import { createLlmProvider } from "@mycrew/llm";
 
+import { failure } from "@/lib/errors.ts";
+import { simulatorDenied } from "@/lib/simulator-gate.ts";
+
 // Prisma's pg adapter needs Node APIs, so this cannot run on the edge.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +19,9 @@ interface ChatRequestBody {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const denied = simulatorDenied(request);
+  if (denied) return denied;
+
   let body: ChatRequestBody;
   try {
     body = (await request.json()) as ChatRequestBody;
@@ -69,10 +75,6 @@ export async function POST(request: Request): Promise<Response> {
       messages: adapter.drain(),
     });
   } catch (error) {
-    // Surfaced to the browser because this endpoint is a development tool and
-    // a readable error beats a silent 500 in the console.
-    const detail = error instanceof Error ? error.message : String(error);
-    console.error("[chat] turn failed", error);
-    return Response.json({ error: detail }, { status: 500 });
+    return failure("chat", error);
   }
 }

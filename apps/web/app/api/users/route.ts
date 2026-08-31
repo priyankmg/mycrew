@@ -1,6 +1,9 @@
 import { prisma } from "@mycrew/db";
 import { createLlmProvider } from "@mycrew/llm";
 
+import { failure } from "@/lib/errors.ts";
+import { simulatorDenied } from "@/lib/simulator-gate.ts";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -11,7 +14,10 @@ export const dynamic = "force-dynamic";
  * platform (a verified phone number); nothing here implies users can pick
  * their own identity in production.
  */
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
+  const denied = simulatorDenied(request);
+  if (denied) return denied;
+
   try {
     const users = await prisma.user.findMany({
       where: { isActive: true },
@@ -34,16 +40,10 @@ export async function GET(): Promise<Response> {
       })),
     });
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    console.error("[users] lookup failed", error);
-    return Response.json(
-      {
-        error: detail,
-        hint:
-          "Check DATABASE_URL in .env, then run `npm run db:migrate` and " +
-          "`npm run db:seed`.",
-      },
-      { status: 500 },
-    );
+    return failure("users", error, {
+      hint:
+        "Check DATABASE_URL in .env, then run `npm run db:migrate` and " +
+        "`npm run db:seed`.",
+    });
   }
 }

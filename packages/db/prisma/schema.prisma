@@ -152,6 +152,13 @@ model FieldDefinition {
   editPolicy FieldEditPolicy  @default(OWNER_ONLY) @map("edit_policy")
   /// Whether staff can even see it. Salary bands stay owner-only.
   visibility FieldVisibility  @default(OWNER_ONLY)
+  /// How confidential the value is, which decides whether it is encrypted at
+  /// rest, kept out of logs and prompts, and refused over chat (story 6.4).
+  ///
+  /// Defaults to CONFIDENTIAL rather than NORMAL: owners invent their own
+  /// fields, so an unclassified field is one nobody has thought about, and the
+  /// safe reading of that is "treat it carefully".
+  sensitivity FieldSensitivity @default(CONFIDENTIAL)
 
   /// Allowed choices for SELECT / MULTI_SELECT, as [{value,label}].
   options    Json?
@@ -225,6 +232,23 @@ enum FieldEditPolicy {
 enum FieldVisibility {
   OWNER_ONLY
   EMPLOYEE_VISIBLE
+}
+
+/// How much protection a field's values need (story 6.4, docs/security.md).
+///
+/// Distinct from `visibility`, which is about which *role* may read a value.
+/// This is about what the platform itself may do with it — store it in the
+/// clear, write it to a log, put it in a model prompt, accept it over chat.
+enum FieldSensitivity {
+  /// Job title, shift preference. No special handling.
+  NORMAL
+  /// Pay, addresses, contacts, notes about a person. Encrypted at rest,
+  /// redacted from logs, withheld from prompts unless the turn needs it.
+  CONFIDENTIAL
+  /// Government identifiers, bank details, ID document images. As above, and
+  /// never accepted in a chat message — collected via a single-use link, since
+  /// WhatsApp message content is processed by Meta in transit.
+  RESTRICTED
 }
 
 enum FieldSource {

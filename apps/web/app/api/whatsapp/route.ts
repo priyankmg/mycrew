@@ -6,6 +6,8 @@ import {
 import { createToolRegistry, handleInboundMessage } from "@mycrew/core";
 import { createLlmProvider } from "@mycrew/llm";
 
+import { logFailure } from "@/lib/errors.ts";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -72,7 +74,7 @@ export async function POST(request: Request): Promise<Response> {
     } catch (error) {
       // Log and carry on. Throwing here would make Meta retry the whole
       // batch, re-delivering messages that were already handled.
-      console.error("[whatsapp] failed to handle message", error);
+      logFailure("whatsapp", error);
     }
   }
 

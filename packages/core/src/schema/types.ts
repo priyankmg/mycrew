@@ -4,6 +4,7 @@
 import type {
   FieldDataType,
   FieldEditPolicy,
+  FieldSensitivity,
   FieldVisibility,
   SchemaEntity,
   UserRole,
@@ -12,6 +13,7 @@ import type {
 export type {
   FieldDataType,
   FieldEditPolicy,
+  FieldSensitivity,
   FieldVisibility,
   SchemaEntity,
   UserRole,
@@ -65,6 +67,15 @@ export interface FieldSpec {
   isRequired: boolean;
   editPolicy: FieldEditPolicy;
   visibility: FieldVisibility;
+  /**
+   * How the platform must handle the value (story 6.4).
+   *
+   * Optional here and defaulted to `CONFIDENTIAL` by `compileSchema`, matching
+   * the column default. Omitting it must never quietly mean "not sensitive":
+   * a field whose classification nobody has considered is precisely the one to
+   * be careful with.
+   */
+  sensitivity?: FieldSensitivity | null;
   description?: string | null;
   options?: readonly FieldOption[] | null;
   validation?: FieldValidation | null;

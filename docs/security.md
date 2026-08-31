@@ -1,7 +1,12 @@
 # Confidentiality and encryption
 
-Design for Phase 1. Nothing here is built yet; this is the target the Phase 1
-work is measured against.
+Design for Phase 1, and the target the Phase 1 work is measured against.
+
+Step 0 of the [roadmap](./roadmap.md) is built: the simulator no longer answers
+on a production deployment, field sensitivity is part of the schema, and errors
+no longer carry their message into logs or HTTP responses. Encryption itself is
+**not** built — see "Phase 1 scope" at the end for what remains and in what
+order.
 
 ## The concern, stated properly
 
@@ -211,20 +216,42 @@ What we can say, and defend:
 
 ## Phase 1 scope
 
-Ordered by ratio of risk removed to effort:
+Ordered by ratio of risk removed to effort. Items 1–3 had to land before
+anything was deployed with real data in it, and have.
 
-1. **Authentication on the admin surface.** Currently nothing. Blocks
-   deployment.
-2. **`sensitivity` on `FieldDefinition`**, defaulting to `CONFIDENTIAL`, with
-   the system fields classified. Cheap now, a migration over live data later.
-3. **Log redaction**, and gate raw error text behind a dev-only flag.
+1. ✅ **The simulator is closed on a deployment.** Both its endpoints answer 404
+   whenever `NODE_ENV=production` unless `MYCREW_SIMULATOR_TOKEN` is set, and
+   the same response covers "switched off" and "wrong token" so an
+   unauthenticated caller learns nothing. Fails closed: forgetting to configure
+   it leaves the data unreachable rather than public.
+
+   This is not owner authentication. Owners logging in to see their own account
+   needs a real session design and is still open (story 6.15).
+
+2. ✅ **`sensitivity` on `FieldDefinition`**, defaulting to `CONFIDENTIAL`, with
+   the system fields classified and `NORMAL` chosen explicitly where it applies.
+   The compiled schema exposes `sensitivityOf`, `acceptsChatInput` and
+   `redact`, so consumers ask the schema rather than keeping their own list. An
+   unknown key answers `RESTRICTED`, so a typo withholds data instead of
+   leaking it.
+
+3. ✅ **Errors no longer carry their message.** Prisma builds messages
+   containing the values it was handed, so a failed write used to echo a pay
+   rate back over HTTP and into the logs. Messages now reach the client in
+   development only; logs get the error name, a trimmed stack and a reference
+   id shared with the response.
+
 4. **Envelope encryption** for `CONFIDENTIAL` and above, with key versioning
    from the first commit.
 5. **Secure-link collection** for `RESTRICTED` fields, plus inbound redaction.
+   The classification and `acceptsChatInput` exist; nothing consults them on
+   the inbound path yet, so a `RESTRICTED` value pasted into chat is currently
+   stored like any other.
 6. **Transcript retention** job.
 7. **Zero-retention agreement** with Anthropic before real data flows.
 8. **A tenant-isolation test** that actively attempts cross-account reads.
 
-Items 1–3 should land before anything is deployed with real data in it. Items 4
-and 5 are what make the customer-facing claims above true, so they gate the
-first paying customer rather than the first deploy.
+Items 4 and 5 are what make the customer-facing claims above true, so they gate
+the first paying customer rather than the first deploy. Until then the honest
+statement is "encrypted in transit, and at rest by the database" — not "sensitive
+fields are encrypted under per-account keys".
