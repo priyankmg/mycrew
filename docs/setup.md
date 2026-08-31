@@ -67,10 +67,14 @@ migration against production data.
 ## 3. Migrate and seed
 
 ```bash
-npm run db:generate    # generate the Prisma client
 npm run db:migrate     # create the schema
 npm run db:seed        # demo account: 1 owner, 2 staff, a custom field
 ```
+
+The Prisma client is generated on `npm install`, since `src/generated` is
+gitignored and nothing in the repo can be imported without it.
+`npm run db:generate` regenerates it on demand — needed after editing
+`schema.prisma`.
 
 Or all of it, plus install:
 
@@ -121,6 +125,23 @@ processing anything.
 Users are matched by phone number, so a `User` row needs a `phoneE164` matching
 the sender's WhatsApp number. Unrecognised numbers are ignored deliberately.
 
+## Deploying to Vercel
+
+Set the project root to `apps/web`. Vercel then installs from the repository
+root but runs `npm run build` **inside `apps/web`**, which is why that app
+generates its own Prisma client rather than relying on the root build script.
+
+Vercel does not run migrations. The build only compiles — it never opens a
+connection, so it succeeds even before the database exists. Apply the schema
+yourself, once per deploy that changes it:
+
+```bash
+npm run db:deploy      # uses DATABASE_URL_UNPOOLED
+```
+
+Until that has been run against the production database, the app deploys and
+serves its UI, but any request that touches data will fail.
+
 ## Commands
 
 | Command | Purpose |
@@ -146,3 +167,7 @@ own.
 
 **`Cannot find module '@mycrew/core'`** — run `npm install` from the repository
 root so npm links the workspaces.
+
+**`Can't resolve './generated/client/client.ts'`** — the Prisma client hasn't
+been generated. `npm install` does it; run `npm run db:generate` directly if
+install scripts were skipped (`--ignore-scripts`).

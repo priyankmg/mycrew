@@ -33,9 +33,8 @@ in, leave, shifts — are data model only; see the
 Needs Node 20+ and a Neon Postgres database.
 
 ```bash
-npm install
+npm install                 # also generates the Prisma client
 cp .env.example .env        # add your Neon connection strings
-npm run db:generate
 npm run db:migrate
 npm run db:seed
 npm run dev

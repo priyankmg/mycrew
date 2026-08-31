@@ -10,6 +10,8 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "// postinstall": "src/generated is gitignored, so a fresh clone cannot import this package until a client exists. Generating on install makes typecheck, test and build work straight after npm install.",
+    "postinstall": "prisma generate",
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",
     "deploy": "prisma migrate deploy",
