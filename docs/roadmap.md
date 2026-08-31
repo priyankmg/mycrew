@@ -9,6 +9,35 @@ staff records, with permissions, approvals, confirmation and an audit trail all
 working end to end. You cannot yet clock in, request leave, or approve a
 request through chat.
 
+## What changed in vision v2
+
+Three things in
+[micro_hcm_product_vision_v2.pdf](../micro_hcm_product_vision_v2.pdf) bear on
+what gets built next.
+
+**A named beachhead.** v2 adds a three-tier targeting plan, and tier 1 is
+*mobile field trades* — landscaping crews, cleaning, contractors, HVAC,
+plumbers, event caterers (~1.2M US firms) — chosen for being non-desk, already
+WhatsApp-native, and heavy on cash payouts. Micro-retail and hospitality, which
+includes cafes, is tier 2.
+
+Worth noticing because the demo account is a cafe. That was picked before there
+was a beachhead, and a landscaping crew across two job sites would exercise
+different things: a crew working somewhere other than a fixed address, clock-ins
+that need a location, and a genuinely dispersed team where nobody sees a
+noticeboard. The scenarios in [verification.md](./verification.md) name the cafe
+staff, so changing the seed means updating that too — a deliberate change, not a
+drive-by one.
+
+**WhatsApp's delivery rules are now explicit.** §5.5 names the 24-hour session
+window and approved message templates. This is a hard constraint on anything
+proactive; see step 6 below.
+
+**The phased rollout table is gone.** v1 §5 defined Phase 1/2/3; v2 drops it in
+favour of targeting and monetisation. "Phase 1" in this repo therefore still
+means v1's definition — ingestion, time clock, shift logging, policy survey —
+and that mapping now lives here rather than in the current vision doc.
+
 ## Story coverage
 
 Against [user-stories.md](./user-stories.md).
@@ -82,10 +111,56 @@ Legend: **Done** · **Model** (data model and services exist, no chat tool) ·
 | --- | --- | --- |
 | 5.1 | Interact via WhatsApp | Adapter **done**, needs Meta credentials |
 
+### 6. Security and confidentiality
+
+Added after the original brief; design in [security.md](./security.md).
+
+| | Story | Status |
+| --- | --- | --- |
+| 6.1 | Be told plainly who can see the data | Not started — documented, not surfaced in product |
+| 6.2 | Encrypted in transit and at rest | Partial — TLS on every hop; no application-level encryption |
+| 6.3 | Provide bank details / IDs outside chat | Not started |
+| 6.4 | Mark any field confidential | Not started — needs `sensitivity` on `FieldDefinition` |
+| 6.5 | Staff cannot see each other's records | **Done** — schema engine `visibility`, enforced in one path |
+| 6.6 | Transcripts not retained indefinitely | Not started |
+| 6.7 | Details not visible to colleagues | **Done** (same mechanism as 6.5) |
+| 6.8 | Share a document without it living in chat | Not started |
+| 6.9 | Encrypt confidential fields per account | Not started |
+| 6.10 | Reject unsigned webhooks, no fallback | **Done** — HMAC-SHA256, unit-tested |
+| 6.11 | Never log message bodies or values | Not started — chat route returns raw error text |
+| 6.12 | Minimise data sent to the LLM | Partial — role projection exists; no sensitivity filter |
+| 6.13 | Redact sensitive values pasted into chat | Not started |
+| 6.14 | Scope every query by account | **Done** by convention — no test enforces it |
+| 6.15 | Require auth on non-chat surfaces | Not started — largest open hole |
+
 ## Suggested next steps
 
 In dependency order. The first three are the ones that make the product
-demonstrable.
+demonstrable. Step 0 is not demonstrable at all and still goes first, because
+it is what makes it safe to put real staff data in.
+
+### 0. Confidentiality groundwork (stories 6.1–6.15)
+
+Design in [security.md](./security.md). The subset that gates a deployment
+holding real data, smallest first:
+
+- **Authentication on the non-chat surfaces.** There is none today; the
+  simulator lets you pick any user. This alone blocks exposing a hosted
+  deployment.
+- **`sensitivity` on `FieldDefinition`**, defaulting to confidential, with the
+  system fields classified. Cheap while the table is small and a migration over
+  live data later.
+- **Log redaction**, and put the raw error text the chat route returns behind a
+  development-only flag.
+
+Then, before a first paying customer: envelope encryption for confidential
+fields (with key versioning from the first commit), secure-link collection for
+bank details and government identifiers so those never enter a chat message, a
+transcript retention job, and a zero-retention agreement with Anthropic.
+
+Worth doing in this order because items 1–3 below all write employee data, and
+retrofitting a sensitivity classification after several tools depend on the
+schema shape is more expensive than adding it now.
 
 ### 1. Attendance tools (stories 4.1, 4.9)
 
@@ -134,12 +209,28 @@ Overtime warnings, shift reminders, expiring certifications and draining
 can't do. This is the point to add the always-on service — it can import
 `handleInboundMessage` and the tool registry unchanged.
 
+This is also where WhatsApp's 24-hour session window first bites (vision v2
+§5.5). Everything built so far is a reply to an inbound message, which Meta
+always permits. A reminder is not: outside 24 hours from someone's last message,
+only a **pre-approved template** will be delivered. So this step needs
+`OutboundMessage` to carry a template id and variables, the adapter to pick
+free-form or template based on conversation staleness, and the templates
+themselves submitted to Meta for approval — which takes calendar time and should
+be started before the code is needed. The simulator will happily send anything,
+so it cannot catch this.
+
 ## Known gaps and things to watch
 
 - **No authentication on the API routes.** The simulator lets you pick any user.
   Fine for local development, must not ship. Real channels authenticate via the
   platform (a verified phone number); the web surface needs its own login before
-  any hosted deployment is exposed.
+  any hosted deployment is exposed. Story 6.15; first item of step 0.
+- **Nothing is encrypted above what Neon provides.** Storage-at-rest protects a
+  stolen disk and little else. Sensitive fields need application-level
+  encryption — see [security.md](./security.md).
+- **No message templates.** `send()` posts free-form text only, so nothing can
+  be delivered outside WhatsApp's 24-hour window. Invisible until the first
+  proactive message.
 - **No rate limiting.** Every inbound message can trigger an LLM call.
 - **Media isn't downloaded.** `InboundMedia` carries WhatsApp's `mediaId`, but
   nothing resolves it to bytes yet.

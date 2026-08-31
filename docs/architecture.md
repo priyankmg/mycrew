@@ -170,6 +170,19 @@ agent turn and the reply are the same code in both.
 Writing the WhatsApp adapter now, before credentials exist, was the point: an
 abstraction with one implementation is a guess.
 
+One thing the abstraction does not yet express, and will have to. Vision v2
+§5.5 calls out WhatsApp's **24-hour session window and approved message
+templates**: outside 24 hours from a person's last inbound message, Meta will
+not deliver free-form text, only a pre-approved template. Everything built so
+far is reactive — a reply to something someone just said — so the constraint has
+never bitten. It becomes unavoidable the moment anything is proactive: a shift
+reminder, a late-clock-in nudge, an approval request to the owner. `send()`
+currently posts free-form text only, so `OutboundMessage` will need to carry a
+template identifier and its variables, and the adapter will need to choose
+between free-form and template based on how stale the conversation is. The web
+simulator has no such limit, which makes this exactly the sort of difference the
+simulator will hide.
+
 ### 7. Identity comes from the channel
 
 On WhatsApp the sender's phone number is asserted by the platform, so it is the
@@ -192,6 +205,40 @@ back in a dispute it has to be theirs.
 
 Attribute updates and their audit rows are written in one transaction, so a
 partial failure cannot leave a value changed with no record of who changed it.
+
+### 9. Confidentiality belongs on the field, not in a list
+
+Designed for Phase 1, not yet built. Full treatment in
+[security.md](./security.md); the architectural claim is here because it decides
+where the concern lives.
+
+`FieldDefinition` already answers "who may read this" (`visibility`) and "who
+may change it" (`editPolicy`). "How sensitive is this" is the same kind of
+question about the same thing, so it goes in the same place rather than into a
+hardcoded list of field names elsewhere in the code.
+
+That placement is forced by story 1.8. Owners invent fields we never
+anticipated, so "Visa expiry" or "Garnishment order" will exist without any
+central list mentioning them. A classification carried by the field definition
+travels automatically to every consumer — storage, logging, the read
+projection, prompt construction — because they all already read the compiled
+schema. A list of names would have to be updated in lockstep with owners'
+vocabulary, which is not a thing that can work.
+
+Two consequences worth stating because they constrain later work:
+
+- An unclassified new field defaults to **confidential**, so the failure mode is
+  excess caution rather than a leak.
+- Application-level encryption means encrypted fields cannot be filtered or
+  sorted in SQL. Fine for per-employee reads, which is how these fields are
+  used; a real constraint on any future aggregate over pay.
+
+The related decision is one the product makes rather than the cryptography:
+the most sensitive values — bank details, government identifiers — should never
+enter a chat message at all, because the WhatsApp Cloud API means Meta processes
+message content in transit. Those are collected through a short-lived
+single-use link instead. See [security.md](./security.md), which is explicit
+about what we therefore cannot claim.
 
 ## Data model notes
 

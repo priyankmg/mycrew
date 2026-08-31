@@ -5,8 +5,10 @@ unchanged (including a couple of duplicated numbers in sections 4 and 5), so
 that references to a story number stay stable.
 
 See [roadmap.md](./roadmap.md) for what is built against each of these, and
-[micro_hcm_product_vision.pdf](../micro_hcm_product_vision.pdf) for the wider
-strategy document.
+[micro_hcm_product_vision_v2.pdf](../micro_hcm_product_vision_v2.pdf) for the
+wider strategy document.
+
+Section 6 was added later and is marked as such.
 
 ## Users
 
@@ -111,3 +113,49 @@ As a S I want to be able to:
 As a CO and E I want to be able to:
 
 - **5.1** Interact with the system via my WhatsApp number / account
+
+---
+
+## 6. Security and Confidentiality
+
+> Added after the original brief. Sections 1–5 above are the brief as written;
+> this section is a later addition, numbered from 6 so nothing above it moves.
+> The design that answers these stories is in [security.md](./security.md).
+
+The driver: an owner is being asked to put pay rates, addresses and eventually
+bank details into a chat thread, and will reasonably ask who else can see it.
+Phase 1 has to have a true answer.
+
+As a CO I want to be able to:
+
+- **6.1** Know exactly who can see my employees' data, and be told plainly that
+  Meta processes WhatsApp messages in transit — before I ask
+- **6.2** Trust that pay rates and personal details are encrypted in transit and
+  at rest, not merely "in the cloud"
+- **6.3** Provide genuinely sensitive data (bank details, government
+  identifiers, ID photos) without typing it into a chat message
+- **6.4** Mark any field I create as confidential, and have that respected
+  everywhere it is stored, logged or displayed
+- **6.5** Be confident an employee cannot see another employee's record
+- **6.6** Have chat transcripts not retained indefinitely
+
+As an E I want to be able to:
+
+- **6.7** Know my personal details are not visible to colleagues, and that my
+  own messages aren't kept forever
+- **6.8** Share a document or identifier with my employer without it sitting in
+  a chat history
+
+As a S I want to be able to:
+
+- **6.9** Encrypt fields classified confidential before they reach the database,
+  under keys scoped per account
+- **6.10** Reject any inbound webhook whose signature does not verify, with no
+  fallback that accepts unsigned requests
+- **6.11** Never write message bodies or field values to logs
+- **6.12** Send only the minimum necessary data to the LLM provider, and never
+  send restricted values at all
+- **6.13** Detect and redact sensitive values a user pastes into chat anyway
+- **6.14** Scope every query by account, so no bug can return another business's
+  data
+- **6.15** Require an authenticated session for any non-chat surface

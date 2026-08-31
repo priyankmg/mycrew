@@ -8,9 +8,12 @@ register and the group chat with a conversation that keeps proper records:
 attendance, leave, approvals and a compliant audit trail, with no forms, no
 logins and no setup.
 
-- [Product vision](./micro_hcm_product_vision.pdf) — market, strategy, phasing
+- [Product vision (v2)](./micro_hcm_product_vision_v2.pdf) — market, targeting,
+  monetisation. ([v1](./micro_hcm_product_vision.pdf) is kept for the phased
+  rollout table, which v2 drops.)
 - [User stories](./docs/user-stories.md) — the product brief
 - [Architecture](./docs/architecture.md) — how it's built and why
+- [Security](./docs/security.md) — confidentiality and encryption design
 - [Setup](./docs/setup.md) — getting it running
 - [Verification](./docs/verification.md) — how to check the foundation holds
 - [Status and roadmap](./docs/roadmap.md) — what's built, what's next
@@ -97,6 +100,32 @@ because a model that misreads "no, not that one" would change someone's pay.
 It's a structural guarantee, not a prompt instruction.
 
 Both are explained in more depth in the [architecture doc](./docs/architecture.md).
+
+## Confidentiality
+
+Owners are being asked to put pay rates, addresses and eventually bank details
+into a chat thread, so "who else can see this?" is the first question that
+matters. Phase 1 answers it, and answers it accurately:
+
+- **Encrypted on every hop, and at rest.** TLS throughout; sensitive fields
+  additionally encrypted by the application under per-account keys before they
+  reach Postgres, because storage-at-rest protects a stolen disk and little
+  else.
+- **Confidentiality is a property of each field**, carried on
+  `FieldDefinition` alongside who may read and edit it — so a field an owner
+  invents themselves is covered without any central list knowing its name. New
+  fields default to confidential.
+- **The most sensitive data never enters a chat message.** Bank details and
+  government identifiers are collected through a short-lived single-use link,
+  not typed into WhatsApp.
+- **We do not claim end-to-end encryption**, because it would be false. On the
+  WhatsApp Business Cloud API, Meta decrypts message content and forwards it to
+  our webhook — true of every business on WhatsApp. That belongs in the first
+  line of a security answer, not the footnotes.
+
+Designed but **not yet built**: authentication, encryption and redaction are
+step 0 of the [roadmap](./docs/roadmap.md). The full design, including what we
+will and won't claim to customers, is in [security.md](./docs/security.md).
 
 ## Licence
 
