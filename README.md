@@ -2,7 +2,6 @@
 Chat enabled workforce management platform for micro businesses
 
 
-
 Users:
 1. Company Owner (CO)
 2. Employee (E)
@@ -62,8 +61,31 @@ As a S I want to be able to:
 3.9 Always make sure I confirm with the user before making a write transaction. 
 
 
+4. Leave and Attendance
 
-4. 
+As an E I want to be able to:
+4.1 Record my attendance by sending a message
+4.2 Record a leave request
+4.3 Edit my existing leaves 
+4.4 Provide a justification of my attendance or leave through free text
+
+As a CO I want to be able to:
+4.4 View my employee's leave requests 
+4.5 Action leave requests 
+4.6 Pull a record of attendance and leaves 
+
+As a S I want to be able to:
+4.7 Prevent an employee from editing their attendance 
+4.8 Record employee and CO conversations or justifications (as-is) in context to a specific leave or attendance 
+4.9 Automatically determine if the employee is marking a late attendance-in or early out and ask for justification
+5.0 Forward leave requests to CO 
+5.1 Automatically manage leave and attendance workflows between E and CO.
+
+5. User Experience
+
+As a CO and E I want to be able to:
+5.1 Interact with the system via my WhatsApp number / account 
+   
 
 
 
