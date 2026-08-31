@@ -160,6 +160,16 @@ serves its UI, but any request that touches data will fail.
 `DATABASE_URL`. The root `.env` is the only one; the packages don't have their
 own.
 
+**`P1000: Authentication failed ... credentials for `(not available)`** — check
+the host in the line above the error. If it contains `ep-xxx`, that's the
+placeholder from `.env.example`: no real database has been configured yet. The
+credentials aren't wrong so much as absent. Create the database, then
+`vercel env pull .env`.
+
+**`vercel env pull` returns only `VERCEL_OIDC_TOKEN`** — the project is linked
+but has no environment variables, which means the Neon integration hasn't been
+added to it. Creating the database is what populates them.
+
 **Migrations hang or fail on a lock** — you're pointing at the pooled endpoint.
 `DATABASE_URL_UNPOOLED` must be the host *without* `-pooler`.
 

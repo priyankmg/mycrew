@@ -49,9 +49,10 @@ highest-value part of this document.
 
 ## Step 2 — Against live Postgres
 
-This is the part that has **not** been verified yet: there were no Neon
-credentials at build time, so migrations have never run against a real
-database. Doing this is the core of the checkpoint.
+Verified on Neon (Postgres 18.6): the initial migration applies cleanly, all 16
+model tables are created, and the seed is idempotent across repeated runs. The
+scenarios below have been run end to end against it. Reproduce them on your own
+branch to confirm.
 
 ### 2a. Get a database
 
@@ -200,6 +201,9 @@ refused one is the single most important row in the database to look at.
 
 Being explicit, so the checkpoint isn't mistaken for more than it is:
 
+- **One database, one region.** The migration is proven on a single Neon branch.
+  Nothing has been tested across Neon branches, nor on a database that already
+  holds data — every migration so far has applied to an empty schema.
 - **No Phase 1 user stories are implemented.** Attendance, leave, shifts,
   onboarding surveys and roster import exist as tables and, in some cases, as
   mock intents, but have no tools behind them. Only three tools are wired:

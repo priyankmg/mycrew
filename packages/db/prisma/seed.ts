@@ -10,9 +10,23 @@
  * starting schema, which would drift. The dependency direction is only
  * acceptable because this is a standalone script that core never imports.
  */
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { addField, seedSystemFields, toFieldKey } from "@mycrew/core";
+import { config as loadEnv } from "dotenv";
 
 import { prisma } from "../src/client.ts";
+
+// This script runs as `tsx prisma/seed.ts`, which does not load
+// prisma.config.ts, so nothing has read the root .env yet — unlike Prisma CLI
+// commands, where the config does it. Resolve the path from this file rather
+// than the cwd, since npm invokes the script from several directories.
+//
+// Safe to do after the client import: the client reads DATABASE_URL on first
+// use, not on import.
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+loadEnv({ path: path.resolve(scriptDir, "../../../.env") });
 
 const ACCOUNT_ID = "acc_demo_rosies";
 const OWNER_USER_ID = "usr_demo_owner";

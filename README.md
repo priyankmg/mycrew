@@ -17,16 +17,15 @@ logins and no setup.
 
 ## Status
 
-**Foundation, pending sign-off.** The architecture, data model and safety
-properties are built, and the logic is covered by 67 tests that need neither a
-database nor a network. You can read and change staff records in conversation,
-with field-level permissions, approvals, confirmation and audit.
+**Foundation, verified.** The architecture, data model and safety properties are
+built and covered by 67 tests that need neither a database nor a network. The
+schema migrates cleanly onto Neon Postgres, and reading and changing staff
+records in conversation works end to end — field-level permissions, approval
+routing, confirm-before-write and audit all confirmed against a live database.
+See [verification](./docs/verification.md) to reproduce it.
 
-Not yet confirmed: migrations have never run against a live Postgres, because
-there were no credentials at build time. Doing that is the first step in
-[verification](./docs/verification.md). Most conversational features — clocking
-in, leave, shifts — are data model only; see the
-[roadmap](./docs/roadmap.md) for a story-by-story breakdown.
+Most conversational features — clocking in, leave, shifts — exist as data model
+only; see the [roadmap](./docs/roadmap.md) for a story-by-story breakdown.
 
 ## Quickstart
 
