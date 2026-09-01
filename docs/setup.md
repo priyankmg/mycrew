@@ -101,9 +101,14 @@ handful of set phrases and no more. To use Claude:
 MYCREW_LLM_PROVIDER="anthropic"
 ANTHROPIC_API_KEY="sk-ant-…"
 ANTHROPIC_MODEL="claude-sonnet-4-6"
+# Needed when the key is identity-linked and not scoped to one workspace.
+ANTHROPIC_WORKSPACE_ID="wrkspc_…"
 ```
 
-Restart the dev server. The sidebar badge shows which provider is live.
+Restart the dev server. The sidebar badge shows which provider is live. The
+workspace id is in Claude Console → Settings → Workspaces. If you omit it and
+the key is identity-linked, every request fails with
+`anthropic-workspace-id is required`.
 
 ## Connecting WhatsApp
 

@@ -5,9 +5,9 @@ hard-to-change safety properties are built and tested. Most of the
 conversational features are not.
 
 The honest summary: you can hold a real conversation that reads and changes
-staff records, with permissions, approvals, confirmation and an audit trail all
-working end to end. You cannot yet clock in, request leave, or approve a
-request through chat.
+staff records, clocks people in and out, files leave, approves requests, and
+walks an owner through account setup, with permissions, confirmation and an
+audit trail working end to end.
 
 ## What changed in vision v2
 
@@ -51,18 +51,18 @@ Legend: **Done** · **Model** (data model and services exist, no chat tool) ·
 | --- | --- | --- |
 | 1.1 | Create a workforce account | Model |
 | 1.2 | Manage the account | Model |
-| 1.3 | Configure policies | Model — `Policy` is versioned; no survey generator |
+| 1.3 | Configure policies | **Done** — leave and pay-cycle from the onboarding survey |
 | 1.4 | Owner works through chat | **Done** |
 | 1.5 | System initiates an account from inputs | **Done** — `seedSystemFields` |
-| 1.6 | System edits account details | Not started |
-| 1.7 | Step-by-step onboarding guidance | Model — `OnboardingSession` exists, flow doesn't |
+| 1.6 | System edits account details | Partial — name/industry from onboarding |
+| 1.7 | Step-by-step onboarding guidance | **Done** |
 | 1.8 | Flexible employee database structure | **Done** — this is the schema engine |
 
 ### 2. Employee management
 
 | | Story | Status |
 | --- | --- | --- |
-| 2.1 | Onboard new employees | Model — needs an `add_employee` tool |
+| 2.1 | Onboard new employees | **Done** |
 | 2.2 | Edit existing employee information | **Done** |
 | 2.3 | Pull records of all employees | **Done** |
 | 2.4 | View history of data changes | Model — `DataChange` is written, nothing reads it back |
@@ -80,12 +80,12 @@ Legend: **Done** · **Model** (data model and services exist, no chat tool) ·
 | | Story | Status |
 | --- | --- | --- |
 | 3.1 | Employee submits a change request | **Done** — raised automatically by policy |
-| 3.2 | Employee checks request status | Model |
-| 3.3 | Look up by id, date or description | Model — `seq` and `summary` exist for this |
-| 3.4 | Owner lists all open requests | Model — single-table query by design |
+| 3.2 | Employee checks request status | **Done** |
+| 3.3 | Look up by id, date or description | **Done** |
+| 3.4 | Owner lists all open requests | **Done** |
 | 3.5 | Bulk action from free text | Not started |
-| 3.6 | Owner decides one or more requests | Model |
-| 3.7 | System pulls a list of requests | Model |
+| 3.6 | Owner decides one or more requests | **Done** — one request at a time |
+| 3.7 | System pulls a list of requests | **Done** |
 | 3.8 | System asks clarifying questions | Partial — ambiguous names are queried, not guessed |
 | 3.9 | System confirms before every write | **Done** |
 
@@ -93,15 +93,15 @@ Legend: **Done** · **Model** (data model and services exist, no chat tool) ·
 
 | | Story | Status |
 | --- | --- | --- |
-| 4.1 | Record attendance by message | Model — `AttendanceEntry` ready |
-| 4.2 | Record a leave request | Model — `LeaveRequest` ready |
+| 4.1 | Record attendance by message | **Done** |
+| 4.2 | Record a leave request | **Done** |
 | 4.3 | Edit existing leave | Model |
-| 4.4 | Free-text justification | **Done** at the storage layer — stored verbatim |
-| 4.5 | Owner views and actions leave | Model |
-| 4.6 | Pull attendance and leave records | Model |
-| 4.7 | Prevent employees editing attendance | **Done** — `isLocked` in the engine |
+| 4.4 | Free-text justification | **Done** — stored verbatim on the punch |
+| 4.5 | Owner views and actions leave | **Done** |
+| 4.6 | Pull attendance and leave records | Partial — leave via request status; no attendance list tool |
+| 4.7 | Prevent employees editing attendance | **Done** — locked rows refuse a new punch |
 | 4.8 | Record conversations against a record | **Done** |
-| 4.9 | Detect late in / early out and ask why | Model — `AttendanceFlag`, `Shift` ready; no detection |
+| 4.9 | Detect late in / early out and ask why | **Done** |
 | 5.0 | Forward leave requests to the owner | Model |
 | 5.1 | Manage leave/attendance workflows | Not started |
 
@@ -165,23 +165,17 @@ retention job, and a zero-retention agreement with Anthropic.
 
 ### 1. Attendance tools (stories 4.1, 4.9)
 
-The flagship interaction: "clocking in" should just work. Needs a
-`record_attendance` tool plus an `attendance-service` that computes `workDate`
-in the account's timezone, compares against `Shift` to set `LATE_IN` /
-`EARLY_OUT`, and asks for a justification when a flag is raised.
-
-Follow the pattern in `employee-service.ts`: resolve through the schema engine,
-write attributes and audit rows in one transaction.
+**Done.** `record_attendance` writes an `AttendanceEntry` for the local
+`workDate`, compares against `Shift`, sets `LATE_IN` / `EARLY_OUT`, and asks
+why when a flag is raised. Audit rows go on `DataChange`. Locked entries
+refuse a further punch.
 
 ### 2. Leave and approval tools (3.2, 3.4, 3.6, 4.2, 4.5)
 
-`ApprovalRequest` is already the single envelope, so `list_pending_requests` and
-`decide_request` are straightforward reads and writes. `decide_request` must be
-`mutates: true` so it inherits the confirmation gate.
-
-Approving a `FIELD_CHANGE` should apply its `payload.changes` back through
-`applyEmployeeChanges` with a `SYSTEM` actor, rather than writing attributes
-directly — otherwise approved changes skip validation.
+**Done.** `request_leave` files a `LeaveRequest` plus an `ApprovalRequest`.
+`list_pending_requests` and `get_request_status` read the envelope;
+`decide_request` is `mutates: true`. Approving a `FIELD_CHANGE` applies
+`payload.changes` through `applyEmployeeChanges` with a `SYSTEM` actor.
 
 ### 3. Turn on Claude (already wired)
 
@@ -191,10 +185,10 @@ and the prompt needs real conversations to tune against.
 
 ### 4. Onboarding survey (1.3, 1.7)
 
-Drive `OnboardingSession` step by step, generating `FieldDefinition` rows from
-the "what do you want to track" step and `Policy` rows from the policy step. Use
-`FIELD_TEMPLATES` in `system-fields.ts` so accounts converge on the same keys
-and types for the same real-world concept.
+**Done.** `continue_onboarding` drives `OnboardingSession` step by step.
+The data-to-track step inserts `FIELD_TEMPLATES` (never restricted fields).
+The policy step writes a versioned `LEAVE` policy (and a pay-cycle policy)
+from what the owner said. Roster import still defers to adding people in chat.
 
 ### 5. Roster import (2.6, vision §3.1)
 

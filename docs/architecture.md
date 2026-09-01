@@ -294,16 +294,16 @@ reminders, expiring certifications), and at that point it can import the same
 
 ## Testing approach
 
-64 tests, no database or network required, because the parts worth testing were
+112 tests, no database or network required, because the parts worth testing were
 built not to need them:
 
 - **`schema/engine.test.ts`** (29) — coercion of what people actually type,
   permission outcomes, locked records, no-op detection, visibility.
-- **`agent/runtime.test.ts`** (11) — the confirmation gate, against an
+- **`agent/runtime.test.ts`** (14) — the confirmation gate, against an
   in-memory store and a scripted provider. The runtime depends on a
   `ConversationStore` port precisely so this is possible; the code under test is
   the code that ships.
 - **`channels/whatsapp.test.ts`** (13) — webhook parsing, including malformed
   payloads and signature verification.
-- **`llm/mock.test.ts`** (11) — intent routing, and that the mock never calls a
-  tool the runtime didn't offer.
+- **`llm/mock.test.ts`** (16) — intent routing, including onboarding, and that
+  the mock never calls a tool the runtime didn't offer.

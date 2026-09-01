@@ -1,16 +1,24 @@
 import { prisma } from "@mycrew/db";
-import type { JsonSchemaObject } from "@mycrew/llm";
 import { z } from "zod";
 
-import {
-  ToolInputError,
-  ToolRegistry,
-  type ToolContext,
-  type ToolDefinition,
-} from "../agent/tools.ts";
-import { applyEmployeeChanges } from "../services/employee-service.ts";
+import { ToolInputError, ToolRegistry, type ToolDefinition } from "../agent/tools.ts";
+import { applyEmployeeChanges, addEmployee, EmployeeInputError } from "../services/employee-service.ts";
 import { loadSchema } from "../services/schema-service.ts";
 import type { AttributeBag } from "../schema/types.ts";
+import { continueOnboardingTool } from "./onboarding.ts";
+import { recordAttendanceTool } from "./attendance.ts";
+import {
+  formatValue,
+  jsonSchema,
+  parseWith,
+  resolveEmployeeId,
+} from "./helpers.ts";
+import {
+  decideRequestTool,
+  getRequestStatusTool,
+  listPendingRequestsTool,
+  requestLeaveTool,
+} from "./requests.ts";
 
 /**
  * The tool surface exposed to the model.
@@ -19,90 +27,7 @@ import type { AttributeBag } from "../schema/types.ts";
  * the system cannot actually perform would let the assistant promise a
  * business owner something that silently never happens — worse than it
  * saying plainly that it can't help yet.
- *
- * Remaining Phase 1 tools (attendance, leave, approvals, roster import) are
- * listed in docs/roadmap.md with the patterns they should follow.
  */
-
-/** Build a tool's advertised JSON Schema from its Zod schema. */
-function jsonSchema(schema: z.ZodType): JsonSchemaObject {
-  const { $schema, ...rest } = z.toJSONSchema(schema) as Record<
-    string,
-    unknown
-  >;
-  void $schema;
-  return rest as unknown as JsonSchemaObject;
-}
-
-/** Turn Zod failures into wording the model can act on. */
-function parseWith<T>(schema: z.ZodType<T>, input: unknown): T {
-  const result = schema.safeParse(input);
-  if (result.success) return result.data;
-
-  const detail = result.error.issues
-    .map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`)
-    .join("; ");
-  throw new ToolInputError(`Those details weren't usable — ${detail}`);
-}
-
-// ---------------------------------------------------------------------------
-// Resolving who the request is about
-// ---------------------------------------------------------------------------
-
-/**
- * Work out which employee a request concerns.
- *
- * Staff are pinned to their own record regardless of what the model passed,
- * so a prompt injection or a model slip cannot redirect a read or write onto
- * a colleague. Owners may name someone, and an ambiguous name is a question
- * rather than a guess.
- */
-async function resolveEmployeeId(
-  context: ToolContext,
-  employeeRef: string | undefined,
-): Promise<string> {
-  if (context.actor.role === "EMPLOYEE") {
-    if (!context.actor.employeeId) {
-      throw new ToolInputError(
-        "I can't find your staff record — please ask your manager to check.",
-      );
-    }
-    return context.actor.employeeId;
-  }
-
-  if (!employeeRef || employeeRef.trim() === "") {
-    throw new ToolInputError("Which member of staff did you mean?");
-  }
-
-  const reference = employeeRef.trim();
-
-  const exact = await prisma.employee.findFirst({
-    where: { accountId: context.accountId, id: reference },
-    select: { id: true },
-  });
-  if (exact) return exact.id;
-
-  const matches = await prisma.employee.findMany({
-    where: {
-      accountId: context.accountId,
-      fullName: { contains: reference, mode: "insensitive" },
-      status: { not: "TERMINATED" },
-    },
-    select: { id: true, fullName: true },
-    take: 5,
-  });
-
-  if (matches.length === 0) {
-    throw new ToolInputError(`I couldn't find anyone called ${reference}.`);
-  }
-  if (matches.length > 1) {
-    const names = matches.map((match) => match.fullName).join(", ");
-    throw new ToolInputError(
-      `There's more than one match for ${reference}: ${names}. Which one?`,
-    );
-  }
-  return matches[0]!.id;
-}
 
 // ---------------------------------------------------------------------------
 // get_employee_record  (read)
@@ -339,18 +264,86 @@ const listEmployees: ToolDefinition<z.infer<typeof listEmployeesInput>> = {
 };
 
 // ---------------------------------------------------------------------------
+// add_employee  (mutating, owner only)
+// ---------------------------------------------------------------------------
+
+const addEmployeeInput = z.object({
+  fullName: z.string().describe("Their full name."),
+  phone: z
+    .string()
+    .optional()
+    .describe("Mobile number. Needed to match them on WhatsApp."),
+  email: z.string().optional(),
+  jobTitle: z.string().optional(),
+  startDate: z
+    .string()
+    .optional()
+    .describe("First day, as YYYY-MM-DD."),
+  employmentType: z.enum(["HOURLY", "SALARIED", "CONTRACTOR"]).optional(),
+  payRate: z
+    .union([z.number(), z.string()])
+    .optional()
+    .describe("Base pay rate. Use a number, e.g. 18.50."),
+});
+
+const addEmployeeTool: ToolDefinition<z.infer<typeof addEmployeeInput>> = {
+  name: "add_employee",
+  description:
+    "Add a new member of staff to the team and create their chat login.",
+  inputSchema: jsonSchema(addEmployeeInput),
+  mutates: true,
+  parse: (input) => parseWith(addEmployeeInput, input),
+
+  summarize(input) {
+    const name = input.fullName.trim();
+    if (name.length < 2) {
+      return { willChange: false, message: "I need their full name." };
+    }
+    const extras = [input.jobTitle, input.phone].filter(Boolean);
+    const detail = extras.length > 0 ? ` (${extras.join(", ")})` : "";
+    return {
+      willChange: true,
+      summary: `I'll add ${name} to the team${detail}.`,
+    };
+  },
+
+  async execute(input, context) {
+    try {
+      const result = await addEmployee({
+        accountId: context.accountId,
+        fullName: input.fullName,
+        actor: context.actor,
+        conversationId: context.conversationId,
+        ...(input.phone ? { phone: input.phone } : {}),
+        ...(input.email ? { email: input.email } : {}),
+        ...(input.jobTitle ? { jobTitle: input.jobTitle } : {}),
+        ...(input.startDate ? { startDate: input.startDate } : {}),
+        ...(input.employmentType ? { employmentType: input.employmentType } : {}),
+        ...(input.payRate !== undefined ? { payRate: input.payRate } : {}),
+      });
+      return { message: result.message, data: result };
+    } catch (error) {
+      if (error instanceof EmployeeInputError) {
+        throw new ToolInputError(error.message);
+      }
+      throw error;
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
 
 export function createToolRegistry(): ToolRegistry {
   const registry = new ToolRegistry();
   registry.register(getEmployeeRecord);
   registry.register(updateEmployeeFields);
   registry.register(listEmployees);
+  registry.register(addEmployeeTool);
+  registry.register(continueOnboardingTool);
+  registry.register(recordAttendanceTool);
+  registry.register(requestLeaveTool);
+  registry.register(listPendingRequestsTool);
+  registry.register(getRequestStatusTool);
+  registry.register(decideRequestTool);
   return registry;
-}
-
-function formatValue(value: unknown): string {
-  if (value === null || value === undefined) return "not set";
-  if (Array.isArray(value)) return value.join(", ");
-  if (typeof value === "boolean") return value ? "yes" : "no";
-  return String(value);
 }

@@ -25,9 +25,9 @@ interface OutboundPayload {
 
 /** Phrases the mock provider recognises, offered so the harness is usable. */
 const SUGGESTIONS = [
-  "show my record",
-  "list the team",
-  "update my emergency contact name to Dana Vega",
+  "start onboarding",
+  "clocking in",
+  "I need a sick day on 2026-09-04",
 ];
 
 export default function ChatSimulator() {

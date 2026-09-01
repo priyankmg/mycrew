@@ -13,7 +13,13 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { addField, seedSystemFields, toFieldKey } from "@mycrew/core";
+import {
+  addField,
+  formatDateInZone,
+  instantInZone,
+  seedSystemFields,
+  toFieldKey,
+} from "@mycrew/core";
 import { config as loadEnv } from "dotenv";
 
 import { prisma } from "../src/client.ts";
@@ -47,6 +53,14 @@ const STAFF = [
     phone: "+15550000003",
     jobTitle: "Kitchen assistant",
     payRate: 17,
+  },
+  {
+    employeeId: "emp_demo_shlok",
+    userId: "usr_demo_shlok",
+    fullName: "Shlok Gupta",
+    phone: "+15550000004",
+    jobTitle: null,
+    payRate: null,
   },
 ] as const;
 
@@ -116,11 +130,15 @@ async function main(): Promise<void> {
         jobTitle: person.jobTitle,
         status: "ACTIVE",
         employmentType: "HOURLY",
-        startDate: new Date("2025-06-01"),
-        attributes: {
-          pay_rate: person.payRate,
-          pay_basis: "hourly",
-        },
+        startDate:
+          person.payRate === null ? new Date() : new Date("2025-06-01"),
+        attributes:
+          person.payRate === null
+            ? { pay_basis: "hourly" }
+            : {
+                pay_rate: person.payRate,
+                pay_basis: "hourly",
+              },
       },
       update: {},
     });
@@ -136,6 +154,47 @@ async function main(): Promise<void> {
         employeeId: person.employeeId,
       },
       update: {},
+    });
+  }
+
+  // Today's shifts, refreshed on every seed so clock-in can detect lateness
+  // against a real schedule rather than a stale date.
+  const timezone = account.timezone;
+  const today = formatDateInZone(new Date(), timezone);
+  const shifts = [
+    {
+      id: "sft_demo_sam_today",
+      employeeId: "emp_demo_sam",
+      start: "09:00",
+      end: "17:00",
+      role: "Barista",
+    },
+    {
+      id: "sft_demo_dana_today",
+      employeeId: "emp_demo_dana",
+      start: "10:00",
+      end: "18:00",
+      role: "Kitchen",
+    },
+  ] as const;
+
+  for (const shift of shifts) {
+    await prisma.shift.upsert({
+      where: { id: shift.id },
+      create: {
+        id: shift.id,
+        accountId: account.id,
+        employeeId: shift.employeeId,
+        startAt: instantInZone(today, shift.start, timezone),
+        endAt: instantInZone(today, shift.end, timezone),
+        role: shift.role,
+      },
+      update: {
+        employeeId: shift.employeeId,
+        startAt: instantInZone(today, shift.start, timezone),
+        endAt: instantInZone(today, shift.end, timezone),
+        role: shift.role,
+      },
     });
   }
 
@@ -168,6 +227,7 @@ async function main(): Promise<void> {
       `  account   ${account.businessName} (${account.id})`,
       `  owner     Priya Mohan`,
       `  staff     ${STAFF.map((person) => person.fullName).join(", ")}`,
+      `  shifts    Sam 09:00–17:00, Dana 10:00–18:00 (${today})`,
       `  fields    ${seeded} system + 1 custom`,
       "",
       "Start the app with `npm run dev` and open http://localhost:3000",

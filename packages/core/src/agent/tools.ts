@@ -166,6 +166,7 @@ const OWNER_ONLY_TOOLS = new Set([
   "add_employee",
   "list_pending_requests",
   "decide_request",
+  "continue_onboarding",
 ]);
 
 export function isToolAvailable(

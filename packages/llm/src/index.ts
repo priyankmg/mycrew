@@ -27,6 +27,9 @@ export function createLlmProvider(
       return createAnthropicProvider({
         apiKey: env["ANTHROPIC_API_KEY"] ?? "",
         ...(env["ANTHROPIC_MODEL"] ? { model: env["ANTHROPIC_MODEL"] } : {}),
+        ...(env["ANTHROPIC_WORKSPACE_ID"]
+          ? { workspaceId: env["ANTHROPIC_WORKSPACE_ID"] }
+          : {}),
       });
 
     default:

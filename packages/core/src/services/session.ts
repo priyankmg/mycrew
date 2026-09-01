@@ -4,6 +4,8 @@ import type { InboundMessage } from "@mycrew/channels";
 import type { ToolActor, ToolContext } from "../agent/tools.ts";
 import type { PromptContext } from "../agent/prompt.ts";
 import { loadSchema } from "./schema-service.ts";
+import { formatDateInZone } from "./time.ts";
+import { activeOnboarding } from "./onboarding-service.ts";
 
 export interface ResolvedSession {
   toolContext: ToolContext;
@@ -57,6 +59,8 @@ export async function resolveSession(
     .map((field) => field.label);
 
   const now = new Date();
+  const onboarding =
+    user.role === "OWNER" ? await activeOnboarding(user.accountId) : null;
 
   return {
     toolContext: {
@@ -71,6 +75,7 @@ export async function resolveSession(
       timezone: user.account.timezone,
       today: formatDateInZone(now, user.account.timezone),
       knownFields,
+      ...(onboarding ? { onboarding } : {}),
     },
   };
 }
@@ -129,15 +134,4 @@ async function upsertConversation(input: {
   });
 }
 
-/**
- * "Today" according to the business, not the server. An owner in California
- * clocking out at 11pm must not have it recorded against tomorrow.
- */
-export function formatDateInZone(date: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
-}
+export { formatDateInZone } from "./time.ts";

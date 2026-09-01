@@ -1,8 +1,10 @@
 import { prisma } from "@mycrew/db";
 
 import type { ToolActor } from "../agent/tools.ts";
+import { coerceValue } from "../schema/coerce.ts";
+import { dateOnly, isIsoDate } from "./time.ts";
 import { loadSchema } from "./schema-service.ts";
-import type { AttributeBag, FieldWriteError } from "../schema/types.ts";
+import type { AttributeBag, FieldSpec, FieldWriteError } from "../schema/types.ts";
 
 export interface ApplyChangesInput {
   accountId: string;
@@ -179,4 +181,163 @@ function formatValue(value: unknown): string {
   if (value === null || value === undefined) return "empty";
   if (Array.isArray(value)) return value.join(", ");
   return String(value);
+}
+
+export class EmployeeInputError extends Error {
+  override readonly name = "EmployeeInputError";
+}
+
+export interface AddEmployeeInput {
+  accountId: string;
+  fullName: string;
+  phone?: string;
+  email?: string;
+  jobTitle?: string;
+  startDate?: string;
+  employmentType?: "HOURLY" | "SALARIED" | "CONTRACTOR";
+  /** Raw pay rate; stored through the schema engine as `pay_rate`. */
+  payRate?: unknown;
+  actor: ToolActor;
+  conversationId?: string;
+}
+
+export interface AddEmployeeResult {
+  employeeId: string;
+  userId: string;
+  fullName: string;
+  message: string;
+}
+
+const PHONE_SPEC: FieldSpec = {
+  key: "phone",
+  label: "Phone number",
+  entity: "EMPLOYEE",
+  dataType: "PHONE",
+  isRequired: false,
+  editPolicy: "OWNER_ONLY",
+  visibility: "EMPLOYEE_VISIBLE",
+  sensitivity: "CONFIDENTIAL",
+};
+
+/**
+ * Create a staff record and a login so they can talk to the assistant.
+ *
+ * The chat identity is a `User` row. Without it they exist on the roster
+ * but cannot clock in or request leave, because those tools resolve from
+ * who is speaking.
+ */
+export async function addEmployee(
+  input: AddEmployeeInput,
+): Promise<AddEmployeeResult> {
+  const fullName = input.fullName.trim();
+  if (fullName.length < 2) {
+    throw new EmployeeInputError("I need their full name.");
+  }
+
+  const account = await prisma.account.findFirstOrThrow({
+    where: { id: input.accountId },
+    select: { countryCode: true },
+  });
+
+  let phoneE164: string | null = null;
+  if (input.phone?.trim()) {
+    const coerced = coerceValue(PHONE_SPEC, input.phone, {
+      countryCode: account.countryCode,
+    });
+    if (!coerced.ok) throw new EmployeeInputError(coerced.message);
+    phoneE164 = typeof coerced.value === "string" ? coerced.value : null;
+  }
+
+  if (phoneE164) {
+    const clash = await prisma.employee.findFirst({
+      where: { accountId: input.accountId, phoneE164 },
+      select: { fullName: true },
+    });
+    if (clash) {
+      throw new EmployeeInputError(
+        `That number is already on ${clash.fullName}'s record.`,
+      );
+    }
+  }
+
+  let startDate: Date | null = null;
+  if (input.startDate) {
+    if (!isIsoDate(input.startDate)) {
+      throw new EmployeeInputError(
+        `I need the start date as YYYY-MM-DD — I can't guess from "${input.startDate}".`,
+      );
+    }
+    startDate = dateOnly(input.startDate);
+  }
+
+  const employmentType = input.employmentType ?? "HOURLY";
+
+  const created = await prisma.$transaction(async (tx) => {
+    const employee = await tx.employee.create({
+      data: {
+        accountId: input.accountId,
+        fullName,
+        phoneE164,
+        email: input.email?.trim() || null,
+        jobTitle: input.jobTitle?.trim() || null,
+        startDate,
+        status: "ACTIVE",
+        employmentType,
+      },
+      select: { id: true },
+    });
+
+    const user = await tx.user.create({
+      data: {
+        accountId: input.accountId,
+        role: "EMPLOYEE",
+        displayName: fullName,
+        phoneE164,
+        email: input.email?.trim() || null,
+        employeeId: employee.id,
+      },
+      select: { id: true },
+    });
+
+    await tx.dataChange.create({
+      data: {
+        accountId: input.accountId,
+        entity: "EMPLOYEE",
+        entityId: employee.id,
+        newValue: { fullName } as never,
+        changedByUserId: input.actor.userId ?? null,
+        actorRole: input.actor.role,
+        source: input.conversationId ? "CHAT" : "API",
+      },
+    });
+
+    return { employeeId: employee.id, userId: user.id };
+  });
+
+  if (input.payRate !== undefined && input.payRate !== null) {
+    await applyEmployeeChanges({
+      accountId: input.accountId,
+      employeeId: created.employeeId,
+      changes: { pay_rate: input.payRate },
+      actor: input.actor,
+      conversationId: input.conversationId,
+    });
+  }
+
+  const extras = [
+    input.jobTitle?.trim(),
+    phoneE164,
+    input.payRate !== undefined && input.payRate !== null
+      ? `pay ${String(input.payRate)}`
+      : null,
+  ].filter(Boolean);
+
+  const detail = extras.length > 0 ? ` (${extras.join(", ")})` : "";
+
+  return {
+    employeeId: created.employeeId,
+    userId: created.userId,
+    fullName,
+    message: `Done — ${fullName} is on the team${detail}. They can chat from the simulator now.`,
+  };
 }

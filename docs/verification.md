@@ -28,7 +28,7 @@ npm run typecheck
 npm test
 ```
 
-Expect **67 passing tests, 0 failing**, across three packages. No database and
+Expect **112 passing tests, 0 failing**, across the packages. No database and
 no network are involved, which is deliberate: the logic worth trusting is
 testable in isolation.
 
@@ -178,6 +178,56 @@ confirmation here before doing nothing; fixed in the same pass as this guide.)
 Finally, **as Priya:** `show my record`. An owner isn't an employee, so expect
 to be asked which member of staff you meant rather than an error.
 
+### 6. Clock in
+
+**As Sam:** `clocking in`
+
+Expect a confirmation of the punch, then **Yes.** If Sam's seeded 9:00–17:00
+shift has already started, the reply should mention he is late and ask why.
+`clocking in late because the bus broke down` records the reason verbatim.
+
+**As Sam:** `heading home now`
+
+Expect a clock-out confirmation, then **Yes.**
+
+*Proves:* attendance writes a real entry, compares against `Shift`, and asks
+for a justification when a flag is raised.
+
+### 7. Leave and approval
+
+**As Sam:** `I need a sick day on 2026-09-04`
+
+Expect a confirmation, then **Yes.** The reply should mention a `REQ-` number.
+
+**As Priya:** `list open requests`
+
+The sick-day request (and the food-handler one from scenario 4, if still
+pending) should appear.
+
+**As Priya:** `approve request N` using that number.
+
+Expect a confirmation, then **Yes.**
+
+*Proves:* leave creates one `ApprovalRequest` envelope, the owner can list
+and decide it, and a `FIELD_CHANGE` approval applies through the same write
+path as a direct edit.
+
+### 8. Account onboarding
+
+**As Priya:** `start onboarding`
+
+Expect a confirmation that setup will start, then **Yes.** The next message
+should ask what the business is called.
+
+Answer something like `we're a cafe called Riverside in Oakland`, confirm,
+and keep going. `skip` is accepted on any step. The "what to track" step
+should offer things like home address and certifications, never government
+ID or bank details.
+
+*Proves:* `continue_onboarding` drives `OnboardingSession`, writes
+`FieldDefinition` rows from templates, and versions a `LEAVE` / `PAY_CYCLE`
+policy from what the owner said.
+
 ---
 
 ## Step 4 — Confirm the audit trail
@@ -204,11 +254,8 @@ Being explicit, so the checkpoint isn't mistaken for more than it is:
 - **One database, one region.** The migration is proven on a single Neon branch.
   Nothing has been tested across Neon branches, nor on a database that already
   holds data — every migration so far has applied to an empty schema.
-- **No Phase 1 user stories are implemented.** Attendance, leave, shifts,
-  onboarding surveys and roster import exist as tables and, in some cases, as
-  mock intents, but have no tools behind them. Only three tools are wired:
-  `get_employee_record`, `update_employee_fields`, `list_employees`. See
-  `docs/roadmap.md` for the per-story status.
+- **Roster import is not implemented.** Onboarding, attendance, leave and
+  approvals now have tools. See `docs/roadmap.md` for the rest.
 - **WhatsApp is unproven against Meta.** Payload parsing and signature
   verification are unit-tested, but no real webhook has been received.
 - **Claude is unproven against the real API.** The provider is written against
@@ -223,7 +270,7 @@ Being explicit, so the checkpoint isn't mistaken for more than it is:
 
 Ready for Phase 1 if:
 
-- [ ] 67 tests pass
+- [ ] 112 tests pass
 - [ ] Migrations apply cleanly to a real Neon database
 - [ ] Seed is idempotent across two runs
 - [ ] Scenarios 1–5 behave as described

@@ -21,6 +21,11 @@ export interface AnthropicProviderOptions {
   maxTokens?: number;
   /** Retries on 429/5xx are handled by the SDK. */
   maxRetries?: number;
+  /**
+   * Required for identity-linked personal / service-account keys that are
+   * not scoped to a single workspace. Sent as `anthropic-workspace-id`.
+   */
+  workspaceId?: string;
 }
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -47,6 +52,9 @@ export function createAnthropicProvider(
   const client = new Anthropic({
     apiKey: options.apiKey,
     maxRetries: options.maxRetries ?? 2,
+    ...(options.workspaceId
+      ? { defaultHeaders: { "anthropic-workspace-id": options.workspaceId } }
+      : {}),
   });
   const model = options.model ?? DEFAULT_MODEL;
 
@@ -54,16 +62,21 @@ export function createAnthropicProvider(
     name: `anthropic:${model}`,
 
     async complete(request: LlmRequest): Promise<LlmResponse> {
-      const response = await client.messages.create({
-        model,
-        max_tokens: request.maxTokens ?? options.maxTokens ?? DEFAULT_MAX_TOKENS,
-        // Low but non-zero: replies should read naturally without the model
-        // improvising about payroll.
-        temperature: request.temperature ?? 0.2,
-        system: request.system,
-        messages: request.turns.map(toMessageParam),
-        tools: request.tools.map(toAnthropicTool),
-      });
+      let response;
+      try {
+        response = await client.messages.create({
+          model,
+          max_tokens: request.maxTokens ?? options.maxTokens ?? DEFAULT_MAX_TOKENS,
+          // Low but non-zero: replies should read naturally without the model
+          // improvising about payroll.
+          temperature: request.temperature ?? 0.2,
+          system: request.system,
+          messages: request.turns.map(toMessageParam),
+          tools: request.tools.map(toAnthropicTool),
+        });
+      } catch (error) {
+        throw rewriteAnthropicError(error);
+      }
 
       const textParts: string[] = [];
       const toolCalls: LlmToolCall[] = [];
@@ -128,6 +141,25 @@ function toMessageParam(turn: LlmTurn): MessageParam {
   });
 
   return { role: turn.role, content };
+}
+
+function rewriteAnthropicError(error: unknown): Error {
+  const text =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : JSON.stringify(error);
+
+  if (/anthropic-workspace-id is required/i.test(text)) {
+    return new LlmConfigurationError(
+      "This Anthropic key is identity-linked, so it needs a workspace. " +
+        "Add ANTHROPIC_WORKSPACE_ID to .env (Claude Console → Settings → " +
+        "Workspaces, starts with wrkspc_) and restart the app.",
+    );
+  }
+
+  return error instanceof Error ? error : new Error(text);
 }
 
 function toStopReason(reason: string | null): LlmStopReason {

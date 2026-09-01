@@ -21,14 +21,15 @@ logins and no setup.
 ## Status
 
 **Foundation, verified.** The architecture, data model and safety properties are
-built and covered by 67 tests that need neither a database nor a network. The
+built and covered by 112 tests that need neither a database nor a network. The
 schema migrates cleanly onto Neon Postgres, and reading and changing staff
 records in conversation works end to end — field-level permissions, approval
 routing, confirm-before-write and audit all confirmed against a live database.
 See [verification](./docs/verification.md) to reproduce it.
 
-Most conversational features — clocking in, leave, shifts — exist as data model
-only; see the [roadmap](./docs/roadmap.md) for a story-by-story breakdown.
+Clocking in, leave, approvals, hiring and account onboarding work in
+conversation. See the [roadmap](./docs/roadmap.md) for a story-by-story
+breakdown.
 
 ## Quickstart
 
@@ -51,7 +52,7 @@ handful of set phrases so the whole stack works offline. Set
 `MYCREW_LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` for real conversation.
 
 ```bash
-npm test          # 64 tests, no database needed
+npm test          # 112 tests, no database needed
 npm run typecheck
 ```
 

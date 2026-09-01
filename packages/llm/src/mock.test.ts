@@ -19,9 +19,13 @@ function tools(...names: string[]): LlmToolSchema[] {
   }));
 }
 
-function request(text: string, available: LlmToolSchema[]): LlmRequest {
+function request(
+  text: string,
+  available: LlmToolSchema[],
+  system = "test",
+): LlmRequest {
   return {
-    system: "test",
+    system,
     turns: [{ role: "user", content: [{ type: "text", text }] }],
     tools: available,
   };
@@ -79,6 +83,55 @@ describe("mock provider routing", () => {
     assert.equal(response.toolCalls[0]?.name, "request_leave");
     assert.equal(input["leaveType"], "sick");
     assert.equal(input["startDate"], "2026-04-02");
+  });
+
+  it("routes listing open requests", async () => {
+    const response = await provider.complete(
+      request("show me the open requests", tools("list_pending_requests")),
+    );
+    assert.equal(response.toolCalls[0]?.name, "list_pending_requests");
+  });
+
+  it("routes an approval by request number", async () => {
+    const response = await provider.complete(
+      request("approve request 42", tools("decide_request")),
+    );
+    assert.equal(response.toolCalls[0]?.name, "decide_request");
+    assert.equal(response.toolCalls[0]?.input["reference"], 42);
+    assert.equal(response.toolCalls[0]?.input["decision"], "approve");
+  });
+
+  it("routes onboarding a named hire", async () => {
+    const response = await provider.complete(
+      request(
+        "onboard Shlok Gupta as staff",
+        tools("add_employee", "continue_onboarding"),
+      ),
+    );
+    assert.equal(response.toolCalls[0]?.name, "add_employee");
+    assert.equal(response.toolCalls[0]?.input["fullName"], "Shlok Gupta");
+  });
+
+  it("routes starting account setup", async () => {
+    const response = await provider.complete(
+      request("start onboarding", tools("continue_onboarding")),
+    );
+    assert.equal(response.toolCalls[0]?.name, "continue_onboarding");
+  });
+
+  it("treats a free-text reply as the setup answer once underway", async () => {
+    const response = await provider.complete(
+      request(
+        "we're a cafe called Riverside in Oakland",
+        tools("continue_onboarding"),
+        'Account setup is in progress (BUSINESS_BASICS). The current question is: "What\'s the business called?"',
+      ),
+    );
+    assert.equal(response.toolCalls[0]?.name, "continue_onboarding");
+    assert.equal(
+      response.toolCalls[0]?.input["answer"],
+      "we're a cafe called Riverside in Oakland",
+    );
   });
 
   it("never calls a tool the runtime did not offer", async () => {

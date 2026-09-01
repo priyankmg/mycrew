@@ -59,8 +59,20 @@ const RULES: IntentRule[] = [
     },
   },
   {
+    tool: "decide_request",
+    test: /\b(approve|reject|deny|decline|ok(?:ay)?)\b.*?req(?:uest)?[\s#-]*(\d+)|req(?:uest)?[\s#-]*(\d+).*?\b(approve|reject|deny|decline)\b/i,
+    build: (message, match) => {
+      const reference = match[2] ?? match[3];
+      const verb = (match[1] ?? match[4] ?? "").toLowerCase();
+      return {
+        ...(reference ? { reference: Number(reference) } : {}),
+        decision: /^(reject|deny|decline)$/.test(verb) ? "reject" : "approve",
+      };
+    },
+  },
+  {
     tool: "list_pending_requests",
-    test: /\b(?:pending|open|outstanding|waiting|approve)\b.*\brequests?\b|\brequests?\b.*\b(?:pending|open|outstanding|waiting)\b|what(?:'s| is)\s+waiting\s+on\s+me/i,
+    test: /\b(?:pending|open|outstanding|waiting)\b.*\brequests?\b|\brequests?\b.*\b(?:pending|open|outstanding|waiting)\b|what(?:'s| is)\s+waiting\s+on\s+me/i,
     build: () => ({}),
   },
   {
@@ -74,16 +86,16 @@ const RULES: IntentRule[] = [
     },
   },
   {
-    tool: "decide_request",
-    test: /\b(approve|reject|deny|decline|ok(?:ay)?)\b.*?req(?:uest)?[\s#-]*(\d+)|req(?:uest)?[\s#-]*(\d+).*?\b(approve|reject|deny|decline)\b/i,
-    build: (message, match) => {
-      const reference = match[2] ?? match[3];
-      const verb = (match[1] ?? match[4] ?? "").toLowerCase();
-      return {
-        ...(reference ? { reference: Number(reference) } : {}),
-        decision: /^(reject|deny|decline)$/.test(verb) ? "reject" : "approve",
-      };
-    },
+    tool: "continue_onboarding",
+    test: /\b(?:(?:start|begin)\s+(?:onboarding|setup)|set\s+up\s+(?:my\s+|the\s+)?account|account\s+setup)\b/i,
+    build: () => ({}),
+  },
+  {
+    tool: "add_employee",
+    test: /\b(?:add|onboard|hire)\b\s+(.+?)(?:\s+as\s+(?:a\s+|an\s+)?(?:new\s+)?(?:staff|employee|hire|barista|cook|chef|manager)(?:\s+member)?)?$/i,
+    build: (_message, match) => ({
+      fullName: (match[1] ?? "").trim(),
+    }),
   },
   {
     tool: "update_employee_fields",
@@ -135,12 +147,34 @@ export function createMockProvider(): LlmProvider {
         return { text: "", toolCalls: [call], stopReason: "tool_use" };
       }
 
+      // Once setup has started, the system prompt carries the current
+      // question. Treat whatever they typed as the answer, unless another
+      // rule already matched (clock-in, add a person, and so on).
+      if (
+        available.has("continue_onboarding") &&
+        /Account setup is in progress/.test(request.system)
+      ) {
+        const skip = /^(skip|none|nothing|later|n\/a|pass)$/i.test(message);
+        return {
+          text: "",
+          toolCalls: [
+            {
+              id: `mock_${Date.now().toString(36)}_continue_onboarding`,
+              name: "continue_onboarding",
+              input: skip ? { skip: true } : { answer: message },
+            },
+          ],
+          stopReason: "tool_use",
+        };
+      }
+
       return textResponse(
         "I'm running without a language model connected, so I only " +
           "understand a few set phrases right now — things like " +
-          '"clock in", "I need Friday off", "show my record", or ' +
-          '"list open requests". Set ANTHROPIC_API_KEY and ' +
-          'MYCREW_LLM_PROVIDER="anthropic" for full conversation.',
+          '"start onboarding", "clock in", "I need Friday off", ' +
+          '"show my record", or "list open requests". Set ' +
+          'ANTHROPIC_API_KEY and MYCREW_LLM_PROVIDER="anthropic" ' +
+          "for full conversation.",
       );
     },
   };
